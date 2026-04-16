@@ -9,9 +9,10 @@ interface LevelUpAnimationProps {
   species: string;
   variant: string;
   onComplete: () => void;
+  completionText?: string;  // 引导完成后的自定义文案
 }
 
-export default function LevelUpAnimation({ oldLevel, newLevel, species, variant, onComplete }: LevelUpAnimationProps) {
+export default function LevelUpAnimation({ oldLevel, newLevel, species, variant, onComplete, completionText }: LevelUpAnimationProps) {
   const [phase, setPhase] = useState<'glow' | 'transform' | 'reveal' | 'done'>('glow');
 
   const sprites = spriteManifest.sprites as Record<string, Record<string, any>>;
@@ -81,9 +82,15 @@ export default function LevelUpAnimation({ oldLevel, newLevel, species, variant,
               className="w-48 h-48 object-contain mx-auto animate-bounce"
               style={{ animationDuration: '2s' }}
             />
-            <p className="text-green-400 text-lg mt-2">
-              Lv.{newLevel}
-            </p>
+            {completionText ? (
+              <p className="text-green-400 text-lg mt-3 max-w-sm mx-auto leading-relaxed">
+                {completionText}
+              </p>
+            ) : (
+              <p className="text-green-400 text-lg mt-2">
+                Lv.{newLevel}
+              </p>
+            )}
           </div>
         )}
       </div>

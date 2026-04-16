@@ -37,7 +37,7 @@ export const ENCOURAGE_TEXTS = [
 export const GUIDE_TEXTS: Record<number, { title: string; text: string; showNext: boolean }> = {
   0: {
     title: '你好呀！',
-    text: '我是你的写作伙伴！在开始创作之前，让我带你快速熟悉一下这个地方吧！整个过程只要一两分钟，完成后我就会破壳而出哦！',
+    text: '我是你的精灵！在正式见面之前，让我带你快速熟悉一下这个软件吧！整个过程只要一两分钟，完成后我就会破壳而出哦！',
     showNext: true,
   },
   1: {
