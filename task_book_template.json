@@ -1,0 +1,25 @@
+{
+  "project_name": "sunflower_sprite_v1",
+  "base_path": "E:/Story Edit/工具开发/项目/story-edit/public/assets/sprites",
+  "assets": {
+    "universal_egg": "common/universal_egg.png",
+    "characters": [
+      {"species": "sunflower", "variant": "sunflower", "levels": [1,2,3,4,5,6,7,8,9]}
+    ]
+  },
+  "tasks": [
+    {
+      "id": "idle_sway_l1",
+      "species": "sunflower",
+      "level": 1,
+      "action": "idle_sway",
+      "description": "缓慢左右摇摆，保持呼吸感，首尾帧无缝衔接",
+      "prompt_template": "首帧与尾帧为同一张太阳花精灵L1立绘。生成2秒无缝循环动画，角色轻微左右摇摆并伴随自然呼吸起伏，光影一致，边缘干净，适合透明背景抠图。",
+      "output_spec": {"size": 256, "fps": 12, "dedup_threshold": 0.95}
+    }
+  ],
+  "output_rules": {
+    "sequence_format": "frame_{frame:03d}.png",
+    "save_path_template": "{base_path}/{species}/{variant}/animations/{action}_L{level}/"
+  }
+}

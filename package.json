@@ -1,0 +1,25 @@
+{
+  "name": "story-edit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI辅助小说创作平台",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "clean": "turbo clean",
+    "db:migrate": "pnpm --filter @story-edit/server db:migrate",
+    "db:generate": "pnpm --filter @story-edit/server db:generate",
+    "db:studio": "pnpm --filter @story-edit/server db:studio"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "UNLICENSED",
+  "packageManager": "pnpm@10.33.0",
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "msgpackr-extract"]
+  },
+  "devDependencies": {
+    "turbo": "^2.9.5"
+  }
+}

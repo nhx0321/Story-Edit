@@ -1,0 +1,86 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
+import { useAuthStore } from '@/lib/auth-store';
+import Link from 'next/link';
+
+const navItems = [
+  { href: '/admin/review', label: '模板审核', level: null },
+  { href: '/admin/templates', label: '官方模板', level: null },
+  { href: '/admin/presets', label: '预设管理', level: null },
+  { href: '/admin/users', label: '用户管理', level: 1 },
+  { href: '/admin/permissions', label: '权限管理', level: 0 },
+  { href: '/admin/logs', label: '操作日志', level: null },
+  { href: '/admin/billing', label: '付费管理', level: 1 },
+  { href: '/admin/art-assets', label: '美术资产', level: null },
+  { href: '/admin/sprite-tools', label: '精灵管理', level: null },
+];
+
+export default function AdminLayout({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const isAdmin = useAuthStore(state => state.isAdmin());
+  const getAdminLevel = useAuthStore(state => state.getAdminLevel);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // Check if user is admin, redirect to dashboard if not
+    if (!isAdmin) {
+      router.replace('/dashboard');
+    } else {
+      setLoading(false);
+    }
+  }, [isAdmin, router]);
+
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-gray-400">加载中...</div>
+      </main>
+    );
+  }
+
+  const rawAdminLevel = getAdminLevel();
+  // 向后兼容：旧缓存 isAdmin=true 但 adminLevel=null，视为总管理员(level=0)
+  const adminLevel = (isAdmin && rawAdminLevel === null) ? 0 : rawAdminLevel;
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Admin Sidebar */}
+      <div className="flex">
+        <aside className="w-56 min-h-screen bg-white border-r border-gray-200 p-4 shrink-0">
+          <h2 className="text-base font-bold text-gray-900 mb-4">管理后台</h2>
+          <nav className="space-y-1">
+            {navItems.map(item => {
+              // Skip items requiring higher admin level
+              if (item.level !== null && (adminLevel === null || adminLevel > item.level)) {
+                return null;
+              }
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={`block px-3 py-2 rounded-lg text-sm font-medium transition ${
+                    pathname === item.href
+                      ? 'bg-gray-900 text-white'
+                      : 'text-gray-600 hover:bg-gray-100'
+                  }`}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+            <Link
+              href="/dashboard"
+              className="block px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100 transition"
+            >
+              &larr; 返回工作台
+            </Link>
+          </nav>
+        </aside>
+        <main className="flex-1 p-8">{children}</main>
+      </div>
+    </div>
+  );
+}

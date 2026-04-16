@@ -1,0 +1,5 @@
+﻿@import '../styles/sprite-animations.css';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+

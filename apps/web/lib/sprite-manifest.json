@@ -1,0 +1,57 @@
+{
+  "universal_egg": "/assets/sprites/common/universal_egg.png",
+  "sprites": {
+    "plant": {
+      "sunflower": {
+        "images": {
+          "L0": "/assets/sprites/plant/sunflower/sunflower_L0.png",
+          "L1": "/assets/sprites/plant/sunflower/sunflower_L1.png",
+          "L2": "/assets/sprites/plant/sunflower/sunflower_L2.png",
+          "L3": "/assets/sprites/plant/sunflower/sunflower_L3.png",
+          "L4": "/assets/sprites/plant/sunflower/sunflower_L4.png",
+          "L5": "/assets/sprites/plant/sunflower/sunflower_L5.png",
+          "L6": "/assets/sprites/plant/sunflower/sunflower_L6.png",
+          "L7": "/assets/sprites/plant/sunflower/sunflower_L7.png",
+          "L8": "/assets/sprites/plant/sunflower/sunflower_L8.png",
+          "L9": "/assets/sprites/plant/sunflower/sunflower_L9.png"
+        },
+        "animation_pools": {},
+        "frames": {}
+      }
+    },
+    "animal": {
+      "fox": {
+        "images": {
+          "L0": "/assets/sprites/characters/animal/fox/L0.svg",
+          "L1": "/assets/sprites/characters/animal/fox/L1.svg",
+          "L2": "/assets/sprites/characters/animal/fox/L2.svg",
+          "L3": "/assets/sprites/characters/animal/fox/L3.svg",
+          "L4": "/assets/sprites/characters/animal/fox/L4.svg",
+          "L5": "/assets/sprites/characters/animal/fox/L5.svg",
+          "L6": "/assets/sprites/characters/animal/fox/L6.svg",
+          "L7": "/assets/sprites/characters/animal/fox/L7.svg",
+          "L8": "/assets/sprites/characters/animal/fox/L8.svg",
+          "L9": "/assets/sprites/characters/animal/fox/L9.svg"
+        },
+        "animation_pools": {}
+      }
+    },
+    "element": {
+      "wind": {
+        "images": {
+          "L0": "/assets/sprites/characters/element/wind/L0.svg",
+          "L1": "/assets/sprites/characters/element/wind/L1.svg",
+          "L2": "/assets/sprites/characters/element/wind/L2.svg",
+          "L3": "/assets/sprites/characters/element/wind/L3.svg",
+          "L4": "/assets/sprites/characters/element/wind/L4.svg",
+          "L5": "/assets/sprites/characters/element/wind/L5.svg",
+          "L6": "/assets/sprites/characters/element/wind/L6.svg",
+          "L7": "/assets/sprites/characters/element/wind/L7.svg",
+          "L8": "/assets/sprites/characters/element/wind/L8.svg",
+          "L9": "/assets/sprites/characters/element/wind/L9.svg"
+        },
+        "animation_pools": {}
+      }
+    }
+  }
+}

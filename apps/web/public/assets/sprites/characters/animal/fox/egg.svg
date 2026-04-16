@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect width="256" height="256" fill="transparent"/>
+  <ellipse cx="128" cy="140" rx="50" ry="65" fill="#FFB74D" opacity="0.5"/>
+  <text x="128" y="145" text-anchor="middle" fill="#E65100" font-size="14" font-family="sans-serif">精灵蛋</text>
+  <text x="128" y="165" text-anchor="middle" fill="#999" font-size="10" font-family="sans-serif">占位图</text>
+</svg>

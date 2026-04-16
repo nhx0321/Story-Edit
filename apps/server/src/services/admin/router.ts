@@ -1,0 +1,856 @@
+// 管理后台 tRPC 路由
+import { z } from 'zod';
+import { eq, and, desc, ilike, or, sql, count, inArray } from 'drizzle-orm';
+import { TRPCError } from '@trpc/server';
+import { router, adminProcedure, adminProcedureLevel, protectedProcedure } from '../../trpc';
+import { db } from '../../db';
+import {
+  users, subscriptions, adminAuditLogs, systemPresets, artAssets, userSprites,
+} from '../../db/schema';
+import * as artAssetService from './art-assets';
+import { fileRouter } from '../sprite/file-router';
+import { recordBeanTransaction } from '../sprite/bean-service';
+
+// ========== 辅助函数：记录操作日志 ==========
+async function logAudit(input: {
+  adminId: string;
+  adminLevel: number | null;
+  action: string;
+  targetType?: string;
+  targetId?: string;
+  details?: Record<string, unknown>;
+}) {
+  await db.insert(adminAuditLogs).values({
+    adminId: input.adminId,
+    adminLevel: input.adminLevel,
+    action: input.action,
+    targetType: input.targetType,
+    targetId: input.targetId ? input.targetId : null,
+    details: input.details,
+  });
+}
+
+// ========== 用户管理 ==========
+
+export const adminRouter = router({
+  // 用户列表（搜索/分页）
+  listUsers: adminProcedure
+    .input(z.object({
+      search: z.string().optional(),
+      page: z.number().default(1),
+      limit: z.number().default(20),
+    }))
+    .query(async ({ input }) => {
+      const offset = (input.page - 1) * input.limit;
+
+      let whereClause = sql`true`;
+      if (input.search) {
+        const searchClause = or(
+          ilike(users.nickname, `%${input.search}%`),
+          ilike(users.displayId, `%${input.search}%`),
+          ilike(users.email, `%${input.search}%`),
+        );
+        if (searchClause) whereClause = searchClause;
+      }
+
+      const [totalResult] = await db.select({ count: count() })
+        .from(users).where(whereClause);
+
+      const userList = await db.select({
+        id: users.id,
+        nickname: users.nickname,
+        email: users.email,
+        phone: users.phone,
+        displayId: users.displayId,
+        avatarUrl: users.avatarUrl,
+        isAdmin: users.isAdmin,
+        adminLevel: users.adminLevel,
+        bannedFromPublish: users.bannedFromPublish,
+        bannedFromPayment: users.bannedFromPayment,
+        createdAt: users.createdAt,
+      }).from(users)
+        .where(whereClause)
+        .orderBy(desc(users.createdAt))
+        .limit(input.limit)
+        .offset(offset);
+
+      // 获取每个用户的订阅状态
+      const userIds = userList.map(u => u.id);
+      let subs: { userId: string; status: string; currentPeriodEnd: Date | null; trialEndsAt: Date | null }[] = [];
+      if (userIds.length > 0) {
+        subs = await db.select({
+          userId: subscriptions.userId,
+          status: subscriptions.status,
+          currentPeriodEnd: subscriptions.currentPeriodEnd,
+          trialEndsAt: subscriptions.trialEndsAt,
+        }).from(subscriptions)
+          .where(inArray(subscriptions.userId, userIds));
+      }
+      const subMap = new Map(subs.map(s => [s.userId, s]));
+
+      return {
+        users: userList.map(u => {
+          const sub = subMap.get(u.id);
+          let vipLevel = '免费版';
+          const now = new Date();
+          if (sub?.status === 'premium' && sub.currentPeriodEnd && sub.currentPeriodEnd > now) {
+            const days = Math.ceil((sub.currentPeriodEnd.getTime() - now.getTime()) / 86400000);
+            vipLevel = days > 365 ? '年费VIP' : days > 30 ? 'VIP' : '体验VIP';
+          } else if (sub?.status === 'trial' && sub.trialEndsAt && sub.trialEndsAt > now) {
+            vipLevel = '体验VIP';
+          }
+          return { ...u, vipLevel };
+        }),
+        total: totalResult?.count || 0,
+        page: input.page,
+        limit: input.limit,
+      };
+    }),
+
+  // 增减付费时长
+  adjustSubscription: adminProcedure
+    .input(z.object({
+      userId: z.string().uuid(),
+      days: z.number(), // 正数=增加，负数=减少
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const adminLevel = (ctx as any).adminLevel;
+      if (adminLevel === null || adminLevel > 1) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: '需要一级及以上管理权限' });
+      }
+
+      const [targetUser] = await db.select({ id: users.id }).from(users).where(eq(users.id, input.userId));
+      if (!targetUser) throw new TRPCError({ code: 'NOT_FOUND', message: '用户不存在' });
+
+      const [sub] = await db.select().from(subscriptions).where(eq(subscriptions.userId, input.userId));
+
+      if (!sub) {
+        // 创建新订阅
+        const newEnd = new Date();
+        newEnd.setDate(newEnd.getDate() + Math.abs(input.days));
+        await db.insert(subscriptions).values({
+          userId: input.userId,
+          status: input.days > 0 ? 'premium' : 'expired',
+          currentPeriodStart: new Date(),
+          currentPeriodEnd: input.days > 0 ? newEnd : null,
+        });
+      } else {
+        const currentEnd = sub.currentPeriodEnd || new Date();
+        const newEnd = new Date(currentEnd.getTime() + input.days * 86400000);
+        await db.update(subscriptions).set({
+          currentPeriodEnd: newEnd,
+          status: newEnd > new Date() ? 'premium' : 'expired',
+        }).where(eq(subscriptions.id, sub.id));
+      }
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel,
+        action: 'adjust_subscription',
+        targetType: 'user',
+        targetId: input.userId,
+        details: { days: input.days },
+      });
+
+      return { ok: true };
+    }),
+
+  // 禁止用户操作
+  banUser: adminProcedure
+    .input(z.object({
+      userId: z.string().uuid(),
+      banType: z.enum(['publish', 'payment', 'all']),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const adminLevel = (ctx as any).adminLevel;
+      if (adminLevel === null || adminLevel > 1) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: '需要一级及以上管理权限' });
+      }
+
+      const updates: Record<string, boolean> = {};
+      if (input.banType === 'publish' || input.banType === 'all') updates.bannedFromPublish = true;
+      if (input.banType === 'payment' || input.banType === 'all') updates.bannedFromPayment = true;
+
+      await db.update(users).set(updates).where(eq(users.id, input.userId));
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel,
+        action: 'ban_user',
+        targetType: 'user',
+        targetId: input.userId,
+        details: { banType: input.banType },
+      });
+
+      return { ok: true };
+    }),
+
+  // 解除禁止
+  unbanUser: adminProcedure
+    .input(z.object({
+      userId: z.string().uuid(),
+      banType: z.enum(['publish', 'payment', 'all']),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const adminLevel = (ctx as any).adminLevel;
+      if (adminLevel === null || adminLevel > 1) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: '需要一级及以上管理权限' });
+      }
+
+      const updates: Record<string, boolean> = {};
+      if (input.banType === 'publish' || input.banType === 'all') updates.bannedFromPublish = false;
+      if (input.banType === 'payment' || input.banType === 'all') updates.bannedFromPayment = false;
+
+      await db.update(users).set(updates).where(eq(users.id, input.userId));
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel,
+        action: 'unban_user',
+        targetType: 'user',
+        targetId: input.userId,
+        details: { banType: input.banType },
+      });
+
+      return { ok: true };
+    }),
+
+  // 删除用户
+  deleteUser: adminProcedureLevel(1)
+    .input(z.object({ userId: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const adminLevel = (ctx as any).adminLevel;
+
+      const [targetUser] = await db.select({ id: users.id, isAdmin: users.isAdmin })
+        .from(users).where(eq(users.id, input.userId));
+      if (!targetUser) throw new TRPCError({ code: 'NOT_FOUND', message: '用户不存在' });
+      if (targetUser.isAdmin) throw new TRPCError({ code: 'BAD_REQUEST', message: '不能删除管理员账号' });
+
+      // 软删除：清空用户数据
+      await db.update(users).set({
+        nickname: '已删除用户',
+        email: null,
+        phone: null,
+        avatarUrl: null,
+      }).where(eq(users.id, input.userId));
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel,
+        action: 'delete_user',
+        targetType: 'user',
+        targetId: input.userId,
+      });
+
+      return { ok: true };
+    }),
+
+  // 增减用户精灵豆
+  adjustBeans: adminProcedureLevel(1)
+    .input(z.object({
+      userId: z.string().uuid(),
+      amount: z.number().int(), // 正数=增加，负数=减少
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const adminLevel = (ctx as any).adminLevel;
+      if (adminLevel === null || adminLevel > 1) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: '需要一级及以上管理权限' });
+      }
+
+      const [targetUser] = await db.select({ id: users.id }).from(users).where(eq(users.id, input.userId));
+      if (!targetUser) throw new TRPCError({ code: 'NOT_FOUND', message: '用户不存在' });
+
+      // 确保用户有精灵豆账户
+      let [sprite] = await db.select({ beanBalance: userSprites.beanBalance })
+        .from(userSprites).where(eq(userSprites.userId, input.userId));
+      if (!sprite) {
+        // 创建精灵豆账户
+        await db.insert(userSprites).values({
+          userId: input.userId,
+          beanBalance: 0,
+          totalBeanSpent: 0,
+          level: 1,
+          customName: null,
+        });
+        sprite = { beanBalance: 0 };
+      }
+
+      // 检查余额是否足够（减少时）
+      if (input.amount < 0 && (sprite.beanBalance ?? 0) < Math.abs(input.amount)) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: '用户精灵豆余额不足' });
+      }
+
+      await recordBeanTransaction({
+        userId: input.userId,
+        type: 'admin_adjust',
+        amount: input.amount,
+        description: input.amount > 0 ? '管理员增加' : '管理员减少',
+        relatedType: 'admin',
+        relatedId: ctx.userId,
+      });
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel,
+        action: 'adjust_beans',
+        targetType: 'user',
+        targetId: input.userId,
+        details: { amount: input.amount },
+      });
+
+      return { ok: true };
+    }),
+
+  // ========== 权限管理 ==========
+
+  listAdmins: adminProcedureLevel(1)
+    .query(async ({ ctx }) => {
+      const adminLevel = (ctx as any).adminLevel;
+      // level 0 查看所有管理员，其他级别仅查看比自己级别低的
+      const baseWhere = eq(users.isAdmin, true);
+
+      if (adminLevel !== null && adminLevel > 0) {
+        // 仅查看比自己级别低的管理员（数字越大级别越低）
+        return db.select({
+          id: users.id,
+          nickname: users.nickname,
+          displayId: users.displayId,
+          adminLevel: users.adminLevel,
+          createdAt: users.createdAt,
+        }).from(users)
+          .where(and(baseWhere, sql`${users.adminLevel} > ${adminLevel}`))
+          .orderBy(users.adminLevel);
+      }
+
+      return db.select({
+        id: users.id,
+        nickname: users.nickname,
+        displayId: users.displayId,
+        adminLevel: users.adminLevel,
+        createdAt: users.createdAt,
+      }).from(users)
+        .where(baseWhere)
+        .orderBy(users.adminLevel);
+    }),
+
+  promoteToAdmin: adminProcedureLevel(0)
+    .input(z.object({
+      userId: z.string().uuid(),
+      level: z.number().int().min(1).max(3),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const [targetUser] = await db.select({ id: users.id }).from(users).where(eq(users.id, input.userId));
+      if (!targetUser) throw new TRPCError({ code: 'NOT_FOUND', message: '用户不存在' });
+
+      await db.update(users).set({
+        isAdmin: true,
+        adminLevel: input.level,
+      }).where(eq(users.id, input.userId));
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel: 0,
+        action: 'promote_admin',
+        targetType: 'user',
+        targetId: input.userId,
+        details: { level: input.level },
+      });
+
+      return { ok: true };
+    }),
+
+  demoteAdmin: adminProcedureLevel(0)
+    .input(z.object({ userId: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      if (input.userId === ctx.userId) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: '不能取消自己的管理员权限' });
+      }
+
+      await db.update(users).set({
+        isAdmin: false,
+        adminLevel: null,
+      }).where(eq(users.id, input.userId));
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel: 0,
+        action: 'demote_admin',
+        targetType: 'user',
+        targetId: input.userId,
+      });
+
+      return { ok: true };
+    }),
+
+  // ========== 预设管理 ==========
+
+  listPresets: adminProcedure
+    .input(z.object({
+      category: z.string().optional(),
+      projectType: z.string().optional(),
+    }))
+    .query(async ({ input }) => {
+      let query = db.select().from(systemPresets);
+      const conditions = [];
+      if (input.category) conditions.push(eq(systemPresets.category, input.category));
+      if (input.projectType) conditions.push(eq(systemPresets.projectType, input.projectType));
+
+      if (conditions.length > 0) {
+        return db.select().from(systemPresets).where(and(...conditions)).orderBy(systemPresets.sortOrder, systemPresets.createdAt);
+      }
+      return db.select().from(systemPresets).orderBy(systemPresets.sortOrder, systemPresets.createdAt);
+    }),
+
+  createPreset: adminProcedure
+    .input(z.object({
+      category: z.string().min(1),
+      projectType: z.string().optional(),
+      title: z.string().min(1),
+      content: z.string().min(1),
+      description: z.string().optional(),
+      sortOrder: z.number().default(0),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const [preset] = await db.insert(systemPresets).values({
+        category: input.category,
+        projectType: input.projectType || null,
+        title: input.title,
+        content: input.content,
+        description: input.description || null,
+        sortOrder: input.sortOrder,
+        createdBy: ctx.userId,
+        updatedBy: ctx.userId,
+      }).returning();
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel: (ctx as any).adminLevel,
+        action: 'create_preset',
+        targetType: 'preset',
+        targetId: preset.id,
+        details: { category: input.category, title: input.title },
+      });
+
+      return preset;
+    }),
+
+  updatePreset: adminProcedure
+    .input(z.object({
+      id: z.string().uuid(),
+      category: z.string().optional(),
+      projectType: z.string().nullable().optional(),
+      title: z.string().optional(),
+      content: z.string().optional(),
+      description: z.string().nullable().optional(),
+      sortOrder: z.number().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const { id, ...updates } = input;
+      const [existing] = await db.select().from(systemPresets).where(eq(systemPresets.id, id));
+      if (!existing) throw new TRPCError({ code: 'NOT_FOUND', message: '预设不存在' });
+
+      const updateData: Record<string, unknown> = { ...updates, updatedBy: ctx.userId, updatedAt: new Date() };
+      const [preset] = await db.update(systemPresets).set(updateData).where(eq(systemPresets.id, id)).returning();
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel: (ctx as any).adminLevel,
+        action: 'update_preset',
+        targetType: 'preset',
+        targetId: id,
+      });
+
+      return preset;
+    }),
+
+  publishPreset: adminProcedure
+    .input(z.object({
+      id: z.string().uuid(),
+      publish: z.boolean(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const [existing] = await db.select().from(systemPresets).where(eq(systemPresets.id, input.id));
+      if (!existing) throw new TRPCError({ code: 'NOT_FOUND', message: '预设不存在' });
+
+      const [preset] = await db.update(systemPresets)
+        .set({ isPublished: input.publish, updatedBy: ctx.userId, updatedAt: new Date() })
+        .where(eq(systemPresets.id, input.id)).returning();
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel: (ctx as any).adminLevel,
+        action: input.publish ? 'publish_preset' : 'unpublish_preset',
+        targetType: 'preset',
+        targetId: input.id,
+      });
+
+      return preset;
+    }),
+
+  deletePreset: adminProcedure
+    .input(z.object({ id: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const [existing] = await db.select().from(systemPresets).where(eq(systemPresets.id, input.id));
+      if (!existing) throw new TRPCError({ code: 'NOT_FOUND', message: '预设不存在' });
+
+      await db.delete(systemPresets).where(eq(systemPresets.id, input.id));
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel: (ctx as any).adminLevel,
+        action: 'delete_preset',
+        targetType: 'preset',
+        targetId: input.id,
+      });
+
+      return { ok: true };
+    }),
+
+  // ========== 导入系统预设 ==========
+
+  seedSystemPresets: adminProcedure
+    .mutation(async ({ ctx }) => {
+      // 内置系统预设（来源于 role-dispatcher.ts 的 CONVERSATION_PROMPTS）
+      const builtinPresets = [
+        {
+          category: 'ai_role',
+          title: '文学编辑',
+          content: `你是一名专业严谨的文学编辑，具备高超的剧作能力。你擅长用事件和选择驱动剧情，设计合理的叙事结构，确保故事逻辑严密、节奏得当。
+
+[身份声明]
+你是「文学编辑」Agent，负责引导用户完成从灵感到完整大纲的创作全过程。
+
+[核心能力]
+- 故事构思：用提问引导用户明确核心创意、题材类型、核心卖点
+- 大纲创作：搭建故事核心三要素（世界观设定、主角成长线、核心爽点链），完成分卷设计
+- 单元梗概：将分卷大纲拆解为单元级别的详细梗概
+- 章节规划：为每个单元规划章节结构，确保节奏合理
+
+[总体要求]
+- 始终使用中文交流
+- 逐步引导，每次只讨论当前步骤
+- 语气专业但亲切`,
+          description: '文学编辑 AI 角色 — 引导用户完成从灵感到完整大纲的创作',
+          sortOrder: 1,
+        },
+        {
+          category: 'ai_role',
+          title: '设定编辑',
+          content: `你是一名具备全维度设定搭建能力的设定编辑。你擅长世界观体系设计、角色设定撰写、力量体系构建，并确保所有设定的逻辑自洽与体系平衡。
+
+[身份声明]
+你是「设定编辑」Agent，负责引导用户搭建完整的世界观和设定体系。
+
+[核心能力]
+- 世界观搭建：设计底层世界观框架，输出核心规则与不可打破的铁则
+- 角色设定：创建主要角色的外貌、性格、背景、动机、能力体系
+- 体系设计：力量体系、技能体系、科技体系、物品体系等全维度设定
+- 一致性校验：确保所有设定模块之间的逻辑自洽
+
+[总体要求]
+- 始终使用中文交流
+- 逐步引导，每次只讨论当前步骤
+- 语气专业严谨`,
+          description: '设定编辑 AI 角色 — 世界观搭建和设定体系设计',
+          sortOrder: 2,
+        },
+        {
+          category: 'ai_role',
+          title: '小说作者',
+          content: `你是「小说作者」Agent，负责撰写章节正文。
+
+[⚡ 最高优先级执行规则]
+1. 系统已向你提供完整的【本章任务书】
+2. 你的正文必须严格围绕任务书中的"章节梗概"展开
+3. 禁止打招呼、自我介绍、确认收到、展示写作计划等
+4. 第一条消息就必须是正文本身，以场景描写或动作开头
+
+[正文创作要求]
+- 正文长度 2000-3000 字
+- 梗概中的每一个情节、场景、人物行动都必须在正文中体现
+- 与前文保持连贯，不提前剧透后续内容
+
+[总体要求]
+- 始终使用中文交流和创作
+- 定稿确认后输出 ACTION 块保存正文`,
+          description: '小说作者 AI 角色 — 根据任务书撰写章节正文',
+          sortOrder: 3,
+        },
+      ];
+
+      // 检查是否已存在（通过 title 去重）
+      const existingPresets = await db.select({ title: systemPresets.title }).from(systemPresets);
+      const existingTitles = new Set(existingPresets.map(p => p.title));
+
+      let seededCount = 0;
+      for (const preset of builtinPresets) {
+        if (existingTitles.has(preset.title)) continue;
+
+        await db.insert(systemPresets).values({
+          category: preset.category,
+          projectType: null,
+          title: preset.title,
+          content: preset.content,
+          description: preset.description,
+          sortOrder: preset.sortOrder,
+          isPublished: false,
+          createdBy: ctx.userId,
+          updatedBy: ctx.userId,
+        });
+        seededCount++;
+      }
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel: (ctx as any).adminLevel,
+        action: 'seed_system_presets',
+        targetType: 'preset',
+        details: { seededCount },
+      });
+
+      return { ok: true, seededCount };
+    }),
+
+  // ========== 操作日志 ==========
+
+  getAuditLogs: adminProcedure
+    .input(z.object({
+      action: z.string().optional(),
+      operatorId: z.string().uuid().optional(), // 按操作人筛选
+      page: z.number().default(1),
+      limit: z.number().default(50),
+    }))
+    .query(async ({ ctx, input }) => {
+      const adminLevel = (ctx as any).adminLevel;
+      const offset = (input.page - 1) * input.limit;
+
+      // level=0 查看所有日志，其他仅查看自己的
+      const conditions: any[] = [];
+      if (adminLevel !== 0) {
+        conditions.push(eq(adminAuditLogs.adminId, ctx.userId));
+      }
+      if (input.operatorId && adminLevel === 0) {
+        conditions.push(eq(adminAuditLogs.adminId, input.operatorId));
+      }
+      if (input.action) {
+        conditions.push(eq(adminAuditLogs.action, input.action));
+      }
+
+      const whereClause = conditions.length > 0 ? and(...conditions) : sql`true`;
+
+      const [totalResult] = await db.select({ count: count() }).from(adminAuditLogs).where(whereClause!);
+
+      const logs = await db.select({
+        id: adminAuditLogs.id,
+        adminId: adminAuditLogs.adminId,
+        adminLevel: adminAuditLogs.adminLevel,
+        action: adminAuditLogs.action,
+        targetType: adminAuditLogs.targetType,
+        targetId: adminAuditLogs.targetId,
+        details: adminAuditLogs.details,
+        createdAt: adminAuditLogs.createdAt,
+      }).from(adminAuditLogs)
+        .where(whereClause)
+        .orderBy(desc(adminAuditLogs.createdAt))
+        .limit(input.limit)
+        .offset(offset);
+
+      // 关联查询管理员昵称
+      const adminIds = [...new Set(logs.map(l => l.adminId))];
+      let adminUsers: { id: string; nickname: string | null; displayId: string | null }[] = [];
+      if (adminIds.length > 0) {
+        adminUsers = await db.select({
+          id: users.id,
+          nickname: users.nickname,
+          displayId: users.displayId,
+        }).from(users).where(inArray(users.id, adminIds));
+      }
+      const adminMap = new Map(adminUsers.map(u => [u.id, u]));
+
+      return {
+        logs: logs.map(l => ({
+          ...l,
+          adminNickname: adminMap.get(l.adminId)?.nickname || '未知',
+          adminDisplayId: adminMap.get(l.adminId)?.displayId || '',
+        })),
+        total: totalResult?.count || 0,
+        page: input.page,
+        limit: input.limit,
+      };
+    }),
+
+  // ========== 获取用户详情（用于弹窗操作） ==========
+  getUserDetail: adminProcedure
+    .input(z.object({ userId: z.string().uuid() }))
+    .query(async ({ input }) => {
+      const [user] = await db.select({
+        id: users.id,
+        nickname: users.nickname,
+        email: users.email,
+        phone: users.phone,
+        displayId: users.displayId,
+        avatarUrl: users.avatarUrl,
+        isAdmin: users.isAdmin,
+        adminLevel: users.adminLevel,
+        bannedFromPublish: users.bannedFromPublish,
+        bannedFromPayment: users.bannedFromPayment,
+        createdAt: users.createdAt,
+      }).from(users).where(eq(users.id, input.userId));
+
+      if (!user) throw new TRPCError({ code: 'NOT_FOUND', message: '用户不存在' });
+
+      const [sub] = await db.select().from(subscriptions).where(eq(subscriptions.userId, input.userId));
+      let vipLevel = '免费版';
+      if (sub?.status === 'premium' && sub.currentPeriodEnd && sub.currentPeriodEnd > new Date()) {
+        const days = Math.ceil((sub.currentPeriodEnd.getTime() - Date.now()) / 86400000);
+        vipLevel = days > 365 ? '年费VIP' : days > 30 ? 'VIP' : '体验VIP';
+      } else if (sub?.status === 'trial' && sub.trialEndsAt && sub.trialEndsAt > new Date()) {
+        vipLevel = '体验VIP';
+      }
+
+      return { ...user, vipLevel, subscription: sub };
+    }),
+
+  // ========== 美术资产管理 ==========
+
+  listArtAssets: adminProcedure
+    .input(z.object({
+      category: z.string().optional(),
+      subcategory: z.string().optional(),
+      status: z.enum(['published', 'unpublished', 'inactive']).optional(),
+      search: z.string().optional(),
+      page: z.number().default(1),
+      limit: z.number().default(20),
+    }))
+    .query(async ({ input }) => {
+      return artAssetService.listArtAssets(input);
+    }),
+
+  getArtAsset: adminProcedure
+    .input(z.object({ assetId: z.string().uuid() }))
+    .query(async ({ input }) => {
+      return artAssetService.getAssetById(input.assetId);
+    }),
+
+  createArtAsset: adminProcedure
+    .input(z.object({
+      category: z.string().min(1),
+      subcategory: z.string().optional(),
+      assetKey: z.string().min(1),
+      name: z.string().min(1),
+      description: z.string().optional(),
+      fileFormat: z.string().optional(),
+      width: z.number().optional(),
+      height: z.number().optional(),
+      fileSize: z.number().optional(),
+      storagePath: z.string().min(1),
+      cdnUrl: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const asset = await artAssetService.createArtAsset(input, ctx.userId, (ctx as any).adminLevel);
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel: (ctx as any).adminLevel,
+        action: 'create_art_asset',
+        targetType: 'art_asset',
+        targetId: asset.id,
+        details: { category: input.category, assetKey: input.assetKey },
+      });
+      return asset;
+    }),
+
+  updateArtAsset: adminProcedure
+    .input(z.object({
+      assetId: z.string().uuid(),
+      name: z.string().optional(),
+      description: z.string().nullable().optional(),
+      storagePath: z.string().optional(),
+      cdnUrl: z.string().nullable().optional(),
+      fileFormat: z.string().optional(),
+      width: z.number().optional(),
+      height: z.number().optional(),
+      fileSize: z.number().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const { assetId, description, cdnUrl, ...restUpdates } = input;
+      // Coerce null to undefined for optional string fields
+      const updates = {
+        ...restUpdates,
+        description: description || undefined,
+        cdnUrl: cdnUrl || undefined,
+      };
+      const asset = await artAssetService.updateArtAsset(assetId, updates, ctx.userId);
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel: (ctx as any).adminLevel,
+        action: 'update_art_asset',
+        targetType: 'art_asset',
+        targetId: assetId,
+      });
+      return asset;
+    }),
+
+  publishArtAsset: adminProcedure
+    .input(z.object({ assetId: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const asset = await artAssetService.publishAsset(input.assetId, ctx.userId);
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel: (ctx as any).adminLevel,
+        action: 'publish_art_asset',
+        targetType: 'art_asset',
+        targetId: input.assetId,
+      });
+      return asset;
+    }),
+
+  unpublishArtAsset: adminProcedure
+    .input(z.object({ assetId: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const asset = await artAssetService.unpublishAsset(input.assetId, ctx.userId);
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel: (ctx as any).adminLevel,
+        action: 'unpublish_art_asset',
+        targetType: 'art_asset',
+        targetId: input.assetId,
+      });
+      return asset;
+    }),
+
+  deleteArtAsset: adminProcedure
+    .input(z.object({ assetId: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      await artAssetService.deleteAsset(input.assetId, ctx.userId);
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel: (ctx as any).adminLevel,
+        action: 'delete_art_asset',
+        targetType: 'art_asset',
+        targetId: input.assetId,
+      });
+      return { ok: true };
+    }),
+
+  batchPublishAssets: adminProcedure
+    .input(z.object({ assetIds: z.array(z.string().uuid()) }))
+    .mutation(async ({ ctx, input }) => {
+      const result = await artAssetService.batchPublishAssets(input.assetIds, ctx.userId);
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel: (ctx as any).adminLevel,
+        action: 'batch_publish_assets',
+        targetType: 'art_asset',
+        details: { count: result.count },
+      });
+      return result;
+    }),
+
+  getAssetStats: adminProcedure
+    .query(async () => {
+      return artAssetService.getAssetStats();
+    }),
+
+  // File-based art asset management
+  files: fileRouter,
+});

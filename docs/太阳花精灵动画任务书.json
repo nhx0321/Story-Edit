@@ -1,0 +1,234 @@
+{
+  "project_name": "向日葵太阳精灵动画",
+  "base_path": "E:/Story Edit/工具开发/项目/story-edit/apps/web/public/assets/sprites",
+  "assets": {
+    "characters": [
+      { "species": "plant", "variant": "sunflower", "levels": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] }
+    ]
+  },
+  "pipeline": {
+    "model": "wanx2.1-i2v-turbo",
+    "mode": "首帧+尾帧",
+    "duration_seconds": 2,
+    "fps": 12,
+    "output_format": "PNG透明背景",
+    "dedup_threshold": 0.95,
+    "cutout_tool": "rembg U2-Net"
+  },
+  "tasks": [
+    {
+      "id": "idle_pulse_l0",
+      "species": "plant",
+      "variant": "sunflower",
+      "level": 0,
+      "action": "idle_pulse",
+      "description": "精灵蛋状态，表面光芒柔和闪烁，如同心跳般的明暗变化，保持安静神秘",
+      "prompt_template": "首帧与尾帧为同一张太阳花精灵蛋（L0）。生成2秒无缝循环动画，精灵蛋表面发出柔和的温暖光芒，光芒强度如心跳般缓慢变化：亮→暗→亮。变化幅度柔和，不要过于剧烈。角色外观始终保持一致，边缘干净，透明背景，适合抠图。",
+      "output_spec": { "size": 256, "fps": 12, "expected_frames": 24, "dedup_threshold": 0.95 }
+    },
+    {
+      "id": "idle_sway_l1",
+      "species": "plant",
+      "variant": "sunflower",
+      "level": 1,
+      "action": "idle_sway",
+      "description": "幼年期太阳花，轻微左右摇摆+花瓣微微开合，自然的呼吸感，首尾帧无缝衔接",
+      "prompt_template": "首帧与尾帧为同一张幼年太阳花立绘（L1）。生成2秒无缝循环动画，角色轻微左右摇摆（约±3度），同时花瓣有微微开合的呼吸感，动作柔和自然，不要太快。角色外观保持一致，光影不变，边缘干净，透明背景，适合抠图。",
+      "output_spec": { "size": 256, "fps": 12, "expected_frames": 24, "dedup_threshold": 0.95 }
+    },
+    {
+      "id": "idle_sway_l2",
+      "species": "plant",
+      "variant": "sunflower",
+      "level": 2,
+      "action": "idle_sway",
+      "description": "成长期太阳花，轻微左右摇摆+花瓣微微开合，与L1动作一致，体型稍大",
+      "prompt_template": "首帧与尾帧为同一张成长期太阳花立绘（L2）。生成2秒无缝循环动画，角色轻微左右摇摆（约±3度），同时花瓣有微微开合的呼吸感，动作柔和自然。角色外观保持一致，边缘干净，透明背景，适合抠图。",
+      "output_spec": { "size": 256, "fps": 12, "expected_frames": 24, "dedup_threshold": 0.95 }
+    },
+    {
+      "id": "idle_tilt_l3",
+      "species": "plant",
+      "variant": "sunflower",
+      "level": 3,
+      "action": "idle_tilt",
+      "description": "成熟期太阳花，可爱地左右倾斜歪头，幅度比摇摆更大，表情生动",
+      "prompt_template": "首帧与尾帧为同一张成熟期太阳花立绘（L3）。生成2秒无缝循环动画，角色可爱地左右倾斜歪头（约±4度），像好奇打量一样，表情生动活泼。动作流畅自然，角色外观保持一致，边缘干净，透明背景，适合抠图。",
+      "output_spec": { "size": 256, "fps": 12, "expected_frames": 24, "dedup_threshold": 0.95 }
+    },
+    {
+      "id": "idle_tilt_l4",
+      "species": "plant",
+      "variant": "sunflower",
+      "level": 4,
+      "action": "idle_tilt",
+      "description": "成熟期太阳花，可爱地左右倾斜歪头，体型比L3稍大",
+      "prompt_template": "首帧与尾帧为同一张成熟期太阳花立绘（L4）。生成2秒无缝循环动画，角色可爱地左右倾斜歪头（约±4度），像好奇打量一样，表情生动活泼。动作流畅自然，角色外观保持一致，边缘干净，透明背景，适合抠图。",
+      "output_spec": { "size": 256, "fps": 12, "expected_frames": 24, "dedup_threshold": 0.95 }
+    },
+    {
+      "id": "idle_tilt_l5",
+      "species": "plant",
+      "variant": "sunflower",
+      "level": 5,
+      "action": "idle_tilt",
+      "description": "完全体太阳花，可爱地左右倾斜歪头，体型增大到512px",
+      "prompt_template": "首帧与尾帧为同一张完全体太阳花立绘（L5，512×512）。生成2秒无缝循环动画，角色可爱地左右倾斜歪头（约±4度），像好奇打量一样，表情生动活泼。动作流畅自然，角色外观保持一致，边缘干净，透明背景，适合抠图。",
+      "output_spec": { "size": 512, "fps": 12, "expected_frames": 24, "dedup_threshold": 0.95 }
+    },
+    {
+      "id": "idle_bounce_l3",
+      "species": "plant",
+      "variant": "sunflower",
+      "level": 3,
+      "action": "idle_bounce",
+      "description": "成熟期太阳花，轻微上下弹跳+缩放效果，充满活力",
+      "prompt_template": "首帧与尾帧为同一张成熟期太阳花立绘（L3）。生成2秒无缝循环动画，角色轻微上下弹跳（约6px幅度），伴随微微缩放变化，充满活力。首尾帧无缝衔接，角色外观保持一致，边缘干净，透明背景，适合抠图。",
+      "output_spec": { "size": 256, "fps": 12, "expected_frames": 24, "dedup_threshold": 0.95 }
+    },
+    {
+      "id": "idle_bounce_l4",
+      "species": "plant",
+      "variant": "sunflower",
+      "level": 4,
+      "action": "idle_bounce",
+      "description": "成熟期太阳花，轻微上下弹跳+缩放效果，体型比L3稍大",
+      "prompt_template": "首帧与尾帧为同一张成熟期太阳花立绘（L4）。生成2秒无缝循环动画，角色轻微上下弹跳（约6px幅度），伴随微微缩放变化，充满活力。首尾帧无缝衔接，角色外观保持一致，边缘干净，透明背景，适合抠图。",
+      "output_spec": { "size": 256, "fps": 12, "expected_frames": 24, "dedup_threshold": 0.95 }
+    },
+    {
+      "id": "idle_bounce_l5",
+      "species": "plant",
+      "variant": "sunflower",
+      "level": 5,
+      "action": "idle_bounce",
+      "description": "完全体太阳花，轻微上下弹跳+缩放效果，体型增大到512px",
+      "prompt_template": "首帧与尾帧为同一张完全体太阳花立绘（L5，512×512）。生成2秒无缝循环动画，角色轻微上下弹跳（约6px幅度），伴随微微缩放变化，充满活力。首尾帧无缝衔接，角色外观保持一致，边缘干净，透明背景，适合抠图。",
+      "output_spec": { "size": 512, "fps": 12, "expected_frames": 24, "dedup_threshold": 0.95 }
+    },
+    {
+      "id": "idle_float_l6",
+      "species": "plant",
+      "variant": "sunflower",
+      "level": 6,
+      "action": "idle_float",
+      "description": "完全体太阳花，悬浮在空中缓慢上下漂浮，周围可有花瓣/光点飘落，梦幻感",
+      "prompt_template": "首帧与尾帧为同一张完全体太阳花立绘（L6，512×512）。生成2秒无缝循环动画，角色悬浮在空中，缓慢上下漂浮（约8px幅度），动作柔和梦幻。角色外观保持一致，边缘干净，透明背景，适合抠图。",
+      "output_spec": { "size": 512, "fps": 12, "expected_frames": 24, "dedup_threshold": 0.95 }
+    },
+    {
+      "id": "idle_float_l7",
+      "species": "plant",
+      "variant": "sunflower",
+      "level": 7,
+      "action": "idle_float",
+      "description": "完全体太阳花，悬浮在空中缓慢上下漂浮，花朵更加璀璨",
+      "prompt_template": "首帧与尾帧为同一张完全体太阳花立绘（L7，512×512）。生成2秒无缝循环动画，角色悬浮在空中，缓慢上下漂浮（约8px幅度），动作柔和梦幻。角色外观保持一致，边缘干净，透明背景，适合抠图。",
+      "output_spec": { "size": 512, "fps": 12, "expected_frames": 24, "dedup_threshold": 0.95 }
+    },
+    {
+      "id": "idle_float_l8",
+      "species": "plant",
+      "variant": "sunflower",
+      "level": 8,
+      "action": "idle_float",
+      "description": "终极形态太阳花，悬浮在空中缓慢上下漂浮，周围有光环效果",
+      "prompt_template": "首帧与尾帧为同一张终极形态太阳花立绘（L8，512×512）。生成2秒无缝循环动画，角色悬浮在空中，缓慢上下漂浮（约8px幅度），动作柔和梦幻。角色外观保持一致，边缘干净，透明背景，适合抠图。",
+      "output_spec": { "size": 512, "fps": 12, "expected_frames": 24, "dedup_threshold": 0.95 }
+    },
+    {
+      "id": "idle_float_l9",
+      "species": "plant",
+      "variant": "sunflower",
+      "level": 9,
+      "action": "idle_float",
+      "description": "最终形态太阳花，悬浮在空中缓慢上下漂浮，最华丽的状态",
+      "prompt_template": "首帧与尾帧为同一张最终形态太阳花立绘（L9，512×512）。生成2秒无缝循环动画，角色悬浮在空中，缓慢上下漂浮（约8px幅度），动作柔和梦幻。角色外观保持一致，边缘干净，透明背景，适合抠图。",
+      "output_spec": { "size": 512, "fps": 12, "expected_frames": 24, "dedup_threshold": 0.95 }
+    },
+    {
+      "id": "upgrade_l1_to_l2",
+      "species": "plant",
+      "variant": "sunflower",
+      "level": 1,
+      "action": "level_up",
+      "description": "幼年太阳花从L1升级到L2的进化过程，体型略微增大，花瓣增多，中间有温暖光效",
+      "prompt_template": "首帧为幼年太阳花L1立绘，尾帧为成长期太阳花L2立绘。生成2秒动画，角色从L1形态逐渐进化为L2形态：体型略微增大，花瓣数量和层次增加，中间有温暖的光芒包裹全身作为升级光效。过渡自然流畅，角色风格保持一致，边缘干净，透明背景，适合抠图。",
+      "output_spec": { "size": 256, "fps": 12, "expected_frames": 24, "dedup_threshold": 0.90 }
+    },
+    {
+      "id": "upgrade_l2_to_l3",
+      "species": "plant",
+      "variant": "sunflower",
+      "level": 2,
+      "action": "level_up",
+      "description": "从成长期升级到成熟期的进化，体型明显增大，花朵完全盛开，色彩更鲜艳",
+      "prompt_template": "首帧为成长期太阳花L2立绘，尾帧为成熟期太阳花L3立绘。生成2秒动画，角色从L2形态进化为L3形态：体型明显增大，花朵完全盛开，花瓣层次更丰富，色彩更鲜艳。中间有升级光效包裹，过渡自然。角色风格保持一致，边缘干净，透明背景，适合抠图。",
+      "output_spec": { "size": 256, "fps": 12, "expected_frames": 24, "dedup_threshold": 0.90 }
+    },
+    {
+      "id": "upgrade_l3_to_l4",
+      "species": "plant",
+      "variant": "sunflower",
+      "level": 3,
+      "action": "level_up",
+      "description": "成熟期内部升级，花朵更加饱满，叶片纹理更精细，光效增强",
+      "prompt_template": "首帧为成熟期太阳花L3立绘，尾帧为成熟期太阳花L4立绘。生成2秒动画，角色在成熟期阶段内部升级：花朵更加饱满绽放，叶片纹理和茎部细节更精细，中间有金色光效闪烁。角色风格保持一致，边缘干净，透明背景，适合抠图。",
+      "output_spec": { "size": 256, "fps": 12, "expected_frames": 24, "dedup_threshold": 0.90 }
+    },
+    {
+      "id": "upgrade_l4_to_l5",
+      "species": "plant",
+      "variant": "sunflower",
+      "level": 4,
+      "action": "level_up",
+      "description": "从成熟期觉醒为完全体，画布从256→512，体型大幅增加，整体更加华丽",
+      "prompt_template": "首帧为成熟期太阳花L4立绘（256×256），尾帧为完全体太阳花L5立绘（512×512）。生成2秒动画，这是重要的完全体觉醒：体型大幅增加，花朵更加华丽丰满，花瓣层次和色彩完全展开，中间有强烈的金色光芒爆发效果。角色风格保持一致，边缘干净，透明背景，适合抠图。",
+      "output_spec": { "size": 512, "fps": 12, "expected_frames": 24, "dedup_threshold": 0.90 }
+    },
+    {
+      "id": "upgrade_l5_to_l6",
+      "species": "plant",
+      "variant": "sunflower",
+      "level": 5,
+      "action": "level_up",
+      "description": "完全体阶段内部升级，花瓣边缘出现光效纹路，气质更加梦幻",
+      "prompt_template": "首帧为完全体太阳花L5立绘（512×512），尾帧为完全体太阳花L6立绘（512×512）。生成2秒动画，角色在完全体阶段内部升级：花瓣边缘出现淡淡的光芒纹路，整体气质更加梦幻空灵，中间有柔和的光效流转。角色外观保持一致，边缘干净，透明背景，适合抠图。",
+      "output_spec": { "size": 512, "fps": 12, "expected_frames": 24, "dedup_threshold": 0.90 }
+    },
+    {
+      "id": "upgrade_l6_to_l7",
+      "species": "plant",
+      "variant": "sunflower",
+      "level": 6,
+      "action": "level_up",
+      "description": "完全体中期升级，花朵更加璀璨，光芒更加耀眼",
+      "prompt_template": "首帧为完全体太阳花L6立绘（512×512），尾帧为完全体太阳花L7立绘（512×512）。生成2秒动画，角色花朵更加璀璨绽放，光芒效果更加耀眼，花瓣层数和色彩饱和度增加。升级光效明亮温暖。角色风格保持一致，边缘干净，透明背景，适合抠图。",
+      "output_spec": { "size": 512, "fps": 12, "expected_frames": 24, "dedup_threshold": 0.90 }
+    },
+    {
+      "id": "upgrade_l7_to_l8",
+      "species": "plant",
+      "variant": "sunflower",
+      "level": 7,
+      "action": "level_up",
+      "description": "接近终极形态，整体更加宏大，花瓣更加繁茂，光效升级为光环效果",
+      "prompt_template": "首帧为完全体太阳花L7立绘（512×512），尾帧为终极形态太阳花L8立绘（512×512）。生成2秒动画，角色向终极形态进化：整体更加宏大，花瓣更加繁茂华丽，周围出现环绕的光环效果，升级光效从内部爆发向外扩散。角色风格保持一致，边缘干净，透明背景，适合抠图。",
+      "output_spec": { "size": 512, "fps": 12, "expected_frames": 24, "dedup_threshold": 0.90 }
+    },
+    {
+      "id": "upgrade_l8_to_l9",
+      "species": "plant",
+      "variant": "sunflower",
+      "level": 8,
+      "action": "level_up",
+      "description": "最终形态觉醒，最华丽的升级效果，光芒万丈，花朵完全绽放",
+      "prompt_template": "首帧为终极形态太阳花L8立绘（512×512），尾帧为最终形态太阳花L9立绘（512×512）。生成2秒动画，这是最终的觉醒：最华丽的升级效果，花朵完全盛开发光，光芒四射，花瓣最为繁茂，光环效果最为强烈，金色光芒从中心向外爆发。角色风格保持一致，边缘干净，透明背景，适合抠图。",
+      "output_spec": { "size": 512, "fps": 12, "expected_frames": 24, "dedup_threshold": 0.90 }
+    }
+  ],
+  "output_rules": {
+    "sequence_format": "frame_{frame:03d}.png",
+    "save_path_template": "{base_path}/{species}/{variant}/animations/{action}_L{level}/"
+  }
+}

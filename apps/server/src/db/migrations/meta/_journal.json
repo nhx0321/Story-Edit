@@ -1,0 +1,41 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1775812529575,
+      "tag": "0000_safe_the_liberteens",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1775819701368,
+      "tag": "0001_broad_spyke",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1775836062116,
+      "tag": "0002_version_and_conversations",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1775923200000,
+      "tag": "0003_project_soft_delete",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1775953042111,
+      "tag": "0004_busy_epoch",
+      "breakpoints": true
+    }
+  ]
+}
