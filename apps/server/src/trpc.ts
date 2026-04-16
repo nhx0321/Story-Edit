@@ -27,6 +27,8 @@ const admin = t.middleware(async ({ ctx, next }) => {
   const [user] = await db.select({ isAdmin: users.isAdmin, adminLevel: users.adminLevel })
     .from(users).where(eq(users.id, ctx.userId));
   if (!user?.isAdmin) throw new TRPCError({ code: 'FORBIDDEN', message: '需要管理员权限' });
+  // Update last active time for online tracking
+  await db.update(users).set({ lastActiveAt: new Date() }).where(eq(users.id, ctx.userId));
   return next({ ctx: { userId: ctx.userId, adminLevel: user.adminLevel } });
 });
 export const adminProcedure = t.procedure.use(admin);

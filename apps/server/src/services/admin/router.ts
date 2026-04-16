@@ -309,28 +309,32 @@ export const adminRouter = router({
       // level 0 查看所有管理员，其他级别仅查看比自己级别低的
       const baseWhere = eq(users.isAdmin, true);
 
-      if (adminLevel !== null && adminLevel > 0) {
-        // 仅查看比自己级别低的管理员（数字越大级别越低）
-        return db.select({
-          id: users.id,
-          nickname: users.nickname,
-          displayId: users.displayId,
-          adminLevel: users.adminLevel,
-          createdAt: users.createdAt,
-        }).from(users)
-          .where(and(baseWhere, sql`${users.adminLevel} > ${adminLevel}`))
-          .orderBy(users.adminLevel);
-      }
-
-      return db.select({
+      const selectFields = {
         id: users.id,
         nickname: users.nickname,
         displayId: users.displayId,
         adminLevel: users.adminLevel,
         createdAt: users.createdAt,
-      }).from(users)
-        .where(baseWhere)
-        .orderBy(users.adminLevel);
+        lastActiveAt: users.lastActiveAt,
+      };
+
+      let result: typeof selectFields extends { id: any } ? Array<{ id: string; nickname: string | null; displayId: string | null; adminLevel: number | null; createdAt: Date; lastActiveAt: Date | null }> : never;
+
+      if (adminLevel !== null && adminLevel > 0) {
+        result = await db.select(selectFields).from(users)
+          .where(and(baseWhere, sql`${users.adminLevel} > ${adminLevel}`))
+          .orderBy(users.adminLevel);
+      } else {
+        result = await db.select(selectFields).from(users)
+          .where(baseWhere)
+          .orderBy(users.adminLevel);
+      }
+
+      const now = new Date();
+      return result.map(a => ({
+        ...a,
+        isOnline: a.lastActiveAt ? (now.getTime() - a.lastActiveAt.getTime()) < 120000 : false,
+      }));
     }),
 
   promoteToAdmin: adminProcedureLevel(0)
@@ -512,6 +516,7 @@ export const adminRouter = router({
     .mutation(async ({ ctx }) => {
       // 内置系统预设（来源于 role-dispatcher.ts 的 CONVERSATION_PROMPTS）
       const builtinPresets = [
+        // ===== AI角色预设 =====
         {
           category: 'ai_role',
           title: '文学编辑',
@@ -574,6 +579,185 @@ export const adminRouter = router({
 - 始终使用中文交流和创作
 - 定稿确认后输出 ACTION 块保存正文`,
           description: '小说作者 AI 角色 — 根据任务书撰写章节正文',
+          sortOrder: 3,
+        },
+        // ===== 创作经验预设 =====
+        {
+          category: 'creation_experience',
+          title: '网文节奏控制指南',
+          content: `# 网文节奏控制指南
+
+## 黄金三章原则
+- 第一章必须出现核心冲突或悬念
+- 第二章展现主角的应对与反击
+- 第三章抛出第一个小高潮
+
+## 章节节奏
+- 每章 2000-3000 字为宜
+- 开头 300 字以内必须有钩子（冲突/悬念/反转）
+- 中段推进剧情，保持紧张感
+- 结尾留悬念，引导读者继续阅读
+
+## 爽点分布
+- 小爽点：每 2-3 章一个
+- 中爽点：每 10-15 章一个
+- 大爽点：每卷 1-2 个
+- 压抑与释放比例约 2:1（两章压抑一章释放）
+
+## 叙事节奏模板
+1. 引入新危机/目标（1章）
+2. 主角准备/探索（1-2章）
+3. 正面冲突/挑战（1-2章）
+4. 胜利/反转/收获（1章）→ 爽点
+5. 过渡/新伏笔（1章）→ 循环`,
+          description: '网文创作中的节奏控制与爽点分布技巧',
+          sortOrder: 1,
+        },
+        {
+          category: 'creation_experience',
+          title: '角色塑造方法',
+          content: `# 角色塑造方法
+
+## 角色塑造四维法
+1. **外在层**：外貌特征、穿着打扮、行为习惯、口头禅
+2. **能力层**：技能特长、战斗风格、智商情商
+3. **内心层**：价值观、恐惧、欲望、创伤、执念
+4. **关系层**：与他人的互动模式、立场态度
+
+## 角色弧光设计
+- **正向弧光**：从缺陷到成长（最常见）
+- **负向弧光**：从善良到堕落（悲剧）
+- **平行动光**：信念不变，考验加深（坚守型主角）
+
+## 对话塑造角色
+- 每个人物应有独特的说话方式
+- 通过对话展现性格而非直接描述
+- 用潜台词替代直白表达
+
+## 反派塑造要点
+- 反派要有合理的动机，而非纯粹为恶
+- 反派的实力应与主角相当或更强
+- 给反派赋予人性闪光点`,
+          description: '角色塑造的系统方法论',
+          sortOrder: 2,
+        },
+        {
+          category: 'creation_experience',
+          title: '世界观搭建框架',
+          content: `# 世界观搭建框架
+
+## 核心层（必写）
+1. **世界基本规则**：物理法则、超自然力量体系
+2. **地理环境**：主要国家/城市/特殊区域
+3. **时间线**：大事件年表、当前时代特征
+4. **力量体系**：等级划分、获取方式、限制条件
+
+## 社会层（重要）
+5. **政治体系**：政权结构、权力分配、主要势力
+6. **经济体系**：货币、贸易、资源分布
+7. **文化风俗**：信仰、禁忌、节日、日常生活方式
+8. **职业体系**：各职业的社会地位和晋升路径
+
+## 细节层（锦上添花）
+9. **科技/魔法水平**：交通工具、通讯、武器装备
+10. **语言特色**：方言、术语、行话、敬语体系
+11. **美食与服饰**：不同阶层的饮食穿衣习惯
+12. **教育体系**：知识传承方式、学院/师徒制度
+
+## 搭建顺序
+先确定核心层 → 根据剧情需要选择社会层 → 写作中逐步补充细节层`,
+          description: '系统化的世界观搭建步骤',
+          sortOrder: 3,
+        },
+        // ===== AI配置完整指南 =====
+        {
+          category: 'ai_config_guide',
+          title: 'DeepSeek 接入完整指南',
+          content: `# DeepSeek 接入完整指南
+
+## 1. 获取 API Key
+1. 访问 https://platform.deepseek.com
+2. 注册/登录账号
+3. 进入「API Keys」页面
+4. 点击「Create API Key」，复制并妥善保存
+
+## 2. 在 Story Edit 中配置
+1. 进入「设置」→「AI配置」
+2. 点击「添加 API Key」
+3. 选择 Provider 为「DeepSeek」
+4. 粘贴 API Key
+5. 点击「保存」
+
+## 3. 可用模型
+- deepseek-chat：通用对话模型（推荐日常使用）
+- deepseek-coder：代码生成专用模型
+
+## 4. 注意事项
+- API Key 请妥善保管，不要分享给他人
+- 建议先测试一条对话确认配置正确
+- 如遇到请求失败，检查余额是否充足`,
+          description: 'DeepSeek API 接入步骤和注意事项',
+          sortOrder: 1,
+        },
+        {
+          category: 'ai_config_guide',
+          title: 'LongCat 接入完整指南',
+          content: `# LongCat 接入完整指南
+
+## 1. 获取 API Key
+1. 访问 LongCat 开放平台
+2. 注册/登录账号并完成实名认证
+3. 进入控制台 → API 管理
+4. 创建新的 API Key
+
+## 2. 在 Story Edit 中配置
+1. 进入「设置」→「AI配置」
+2. 点击「添加 API Key」
+3. 选择 Provider 为「LongCat」
+4. 填写 API Key
+5. 如有自定义 Base URL 一并填入
+6. 点击「保存」
+
+## 3. 测试连接
+1. 进入任意项目的 AI 助手
+2. 发送一条测试消息
+3. 确认收到正常回复
+
+## 4. 常见问题
+- 确认 API Key 格式正确（无多余空格）
+- 检查账号是否有可用额度
+- 如使用自定义 Base URL，确保地址可达`,
+          description: 'LongCat API 接入步骤和常见问题',
+          sortOrder: 2,
+        },
+        {
+          category: 'ai_config_guide',
+          title: '通义千问 接入完整指南',
+          content: `# 通义千问（阿里云）接入完整指南
+
+## 1. 获取 API Key
+1. 访问阿里云百炼平台 https://bailian.console.aliyun.com
+2. 使用阿里云账号登录
+3. 进入「API-KEY管理」页面
+4. 创建新的 API Key
+
+## 2. 在 Story Edit 中配置
+1. 进入「设置」→「AI配置」
+2. 点击「添加 API Key」
+3. 选择 Provider 为「通义千问」
+4. 填写 API Key
+5. 点击「保存」
+
+## 3. 可用模型
+- qwen-turbo：快速响应，适合日常对话
+- qwen-plus：平衡性能与质量，推荐使用
+- qwen-max：最高质量，适合复杂任务
+
+## 4. 注意事项
+- 确保阿里云账号已开通百炼服务
+- 检查服务是否已开通并获取到调用权限
+- API 调用会产生费用，请关注账户余额`,
+          description: '通义千问 API 接入步骤和可用模型',
           sortOrder: 3,
         },
       ];

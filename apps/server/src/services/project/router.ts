@@ -138,6 +138,21 @@ export const projectRouter = router({
       return { success: true };
     }),
 
+  // 清理 30 天前的已删除项目（定时任务调用）
+  cleanupOldDeleted: protectedProcedure.mutation(async ({ ctx }) => {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    // 查找超期的已删除项目
+    const oldProjects = await db.select({ id: projects.id, userId: projects.userId, name: projects.name })
+      .from(projects)
+      .where(and(eq(projects.userId, ctx.userId), eq(projects.status, 'deleted'), lt(projects.deletedAt, thirtyDaysAgo)));
+
+    for (const project of oldProjects) {
+      // 物理删除项目及其关联数据
+      await db.delete(projects).where(eq(projects.id, project.id));
+    }
+    return { cleanedCount: oldProjects.length };
+  }),
+
   // ========== 卷管理 ==========
   createVolume: protectedProcedure
     .input(z.object({ projectId: z.string().uuid(), title: z.string(), synopsis: z.string().optional(), sortOrder: z.number().default(0) }))

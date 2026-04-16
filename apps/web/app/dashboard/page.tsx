@@ -103,6 +103,23 @@ export default function DashboardPage() {
     },
   });
 
+  const utils = trpc.useUtils();
+  const deleteProject = trpc.project.delete.useMutation({
+    onSuccess: () => {
+      utils.project.list.invalidate();
+      utils.project.listDeleted.invalidate();
+    },
+    onError: (err) => alert(err.message),
+  });
+
+  const handleDeleteProject = (e: React.MouseEvent, p: any) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (confirm(`确定要将「${p.name}」移入回收站吗？\n回收站中的项目将在 30 天后自动永久删除。`)) {
+      deleteProject.mutate({ id: p.id });
+    }
+  };
+
   const handleCreate = () => {
     if (!form.name || !form.genreTag) {
       setError('请填写项目名称和选择题材');
@@ -236,23 +253,34 @@ export default function DashboardPage() {
         ) : projects && projects.length > 0 ? (
           <div className="grid gap-4">
             {projects.map((p) => (
-              <a
+              <div
                 key={p.id}
-                href={`/project/${p.id}`}
-                className="bg-white rounded-xl border border-gray-200 p-6 hover:border-gray-400 transition block"
+                className="bg-white rounded-xl border border-gray-200 p-6 hover:border-gray-400 transition group relative"
               >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="text-lg font-semibold">{p.name}</h2>
-                    <p className="text-sm text-gray-500 mt-1">
-                      {p.genre || '未设置类型'} · {p.style || '未设置风格'}
-                    </p>
+                <a href={`/project/${p.id}`} className="block">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-lg font-semibold">{p.name}</h2>
+                      <p className="text-sm text-gray-500 mt-1">
+                        {p.genre || '未设置类型'} · {p.style || '未设置风格'}
+                      </p>
+                    </div>
+                    <span className="text-xs text-gray-400">
+                      {new Date(p.createdAt).toLocaleDateString('zh-CN')}
+                    </span>
                   </div>
-                  <span className="text-xs text-gray-400">
-                    {new Date(p.createdAt).toLocaleDateString('zh-CN')}
-                  </span>
-                </div>
-              </a>
+                </a>
+                <button
+                  onClick={(e) => handleDeleteProject(e, p)}
+                  disabled={deleteProject.isPending}
+                  className="absolute top-4 right-4 p-1.5 text-gray-300 hover:text-red-600 opacity-0 group-hover:opacity-100 transition rounded-lg hover:bg-red-50"
+                  title="移入回收站"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              </div>
             ))}
           </div>
         ) : (

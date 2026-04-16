@@ -44,6 +44,7 @@ export const users = pgTable('users', {
   trialDaysEarned: integer('trial_days_earned').default(0),
   lastCheckinAt: timestamp('last_checkin_at'),
   checkinStreak: integer('checkin_streak').default(0),
+  lastActiveAt: timestamp('last_active_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
