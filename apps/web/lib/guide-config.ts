@@ -20,7 +20,7 @@ export const L0_GUIDE_STEPS: GuideStepConfig[] = [
   {
     step: 1,
     title: '认识导航栏',
-    text: '最上面是导航栏哦：工作台、模板广场、设置。管理员还可以看到「管理后台」入口~',
+    text: '最上面是导航栏哦：主页、AI配置、模板广场、设置。管理员还可以看到「管理后台」入口~',
     target: '[data-guide-target="navbar"]',
     placement: 'bottom',
     action: 'next',

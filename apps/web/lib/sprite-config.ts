@@ -16,12 +16,12 @@ export const SPECIES_CONFIG = {
 } as const;
 
 export const LEVEL_DAYS: Record<number, number> = {
-  1: 0, 2: 26, 3: 58, 4: 96, 5: 140, 6: 190, 7: 245, 8: 305, 9: 365,
+  1: 7, 2: 21, 3: 42, 4: 63, 5: 91, 6: 119, 7: 154, 8: 196, 9: 259,
 };
 
 // 累计经验值表（与后端 CUMULATIVE_XP 一致）
 export const CUMULATIVE_XP: Record<number, number> = {
-  1: 100, 2: 300, 3: 600, 4: 1000, 5: 1500, 6: 2100, 7: 2800, 8: 3600, 9: 4600,
+  1: 50, 2: 150, 3: 300, 4: 500, 5: 750, 6: 1050, 7: 1450, 8: 1950, 9: 2750,
 };
 
 export const ENCOURAGE_TEXTS = [
@@ -42,7 +42,7 @@ export const GUIDE_TEXTS: Record<number, { title: string; text: string; showNext
   },
   1: {
     title: '认识导航栏',
-    text: '最上面是导航栏哦：\n• 工作台 — 你的项目大本营\n• 模板广场 — 灵感和方法论\n• 设置 — 个人信息和订阅\n管理员还可以看到「管理后台」入口~',
+    text: '最上面是导航栏哦：\n• 主页 — 你的项目大本营\n• AI配置 — 模型接入设置\n• 模板广场 — 灵感和方法论\n• 设置 — 个人信息和订阅\n管理员还可以看到「管理后台」入口~',
     showNext: true,
   },
   2: {

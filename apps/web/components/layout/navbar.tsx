@@ -8,9 +8,9 @@ import { trpc } from '@/lib/trpc';
 
 const NAV_ITEMS = [
   { href: '/dashboard', label: '主页' },
+  { href: '/ai-config', label: 'AI配置' },
   { href: '/marketplace', label: '模板广场' },
   { href: '/sprite-shop', label: '精灵商城' },
-  { href: '/ai-config', label: 'AI配置' },
   { href: '/settings', label: '设置' },
 ];
 
