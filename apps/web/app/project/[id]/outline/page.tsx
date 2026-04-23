@@ -56,10 +56,10 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
     { enabled: chatOpen || aiEditChatOpen },
   );
 
-  // 加载故事脉络（用于 editor 角色）
+  // 加载故事脉络（用于 editor 角色和导出）
   const { data: storyNarrative } = trpc.project.getNarrative.useQuery(
     { projectId },
-    { enabled: chatOpen || aiEditChatOpen },
+    { enabled: true },
   );
 
   // 数据查询
@@ -403,6 +403,7 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
       projectSynopsis: null,
       volumes,
       selectedChapters: exportMode === 'selected' ? selectedChapters : undefined,
+      storyNarrative,
     };
   };
 
