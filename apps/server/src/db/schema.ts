@@ -8,7 +8,7 @@ export const subscriptionStatusEnum = pgEnum('subscription_status', [
 ]);
 
 export const projectTypeEnum = pgEnum('project_type', [
-  'novel', 'screenplay', 'prompt_gen',
+  'novel', 'webnovel', 'screenplay', 'prompt_gen',
 ]);
 
 export const memoryLevelEnum = pgEnum('memory_level', [
@@ -23,6 +23,12 @@ export const genreEnum = pgEnum('genre', [
   'xianxia', 'urban', 'apocalypse', 'romance', 'military',
   'political', 'scifi', 'suspense', 'fantasy', 'historical',
   'game', 'male_oriented', 'female_oriented', 'other',
+  'serious_literature', 'historical_literature', 'children_literature',
+  'detective_novel', 'social_realism', 'wuxia_novel',
+  'historical_novel', 'historical_webnovel', 'ancient_romance',
+  'modern_romance', 'sweet_pet', 'entertainment',
+  'quick_transmigration', 'xianxia_romance', 'palace_intrigue',
+  'movie_drama', 'web_drama', 'short_drama', 'family_ethics',
 ]);
 
 // ========== 用户 ==========
@@ -86,6 +92,7 @@ export const aiConfigs = pgTable('ai_configs', {
   apiKey: text('api_key_encrypted').notNull(),
   baseUrl: text('base_url'),
   defaultModel: varchar('default_model', { length: 100 }),
+  isDefault: boolean('is_default').default(false),
   isActive: boolean('is_active').default(true),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
@@ -173,6 +180,18 @@ export const outlineVersions = pgTable('outline_versions', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
+// ========== 故事脉络 ==========
+
+export const storyNarratives = pgTable('story_narratives', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  title: text('title').notNull(),
+  content: text('content').notNull(),
+  status: varchar('status', { length: 20 }).default('active'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
 // ========== 设定 ==========
 
 export const settings = pgTable('settings', {
@@ -185,6 +204,17 @@ export const settings = pgTable('settings', {
   deletedAt: timestamp('deleted_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+// 设定关系（词条之间的连线关系）
+export const settingRelationships = pgTable('setting_relationships', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  projectId: uuid('project_id').notNull().references(() => projects.id),
+  sourceId: uuid('source_id').notNull(),
+  targetId: uuid('target_id').notNull(),
+  relationType: varchar('relation_type', { length: 30 }).notNull(), // ally / enemy / belongs / location / item / family / other
+  description: text('description'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
 // ========== AI 角色 ==========
@@ -322,6 +352,7 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   settings: many(settings),
   aiRoles: many(aiRoles),
   memoryEntries: many(memoryEntries),
+  storyNarratives: many(storyNarratives),
 }));
 
 export const volumesRelations = relations(volumes, ({ one, many }) => ({
@@ -359,6 +390,7 @@ export const templates = pgTable('templates', {
   description: text('description'),
   source: templateSourceEnum('source').notNull().default('official'),
   category: varchar('category', { length: 100 }), // 方法论/结构/参考章节
+  aiTargetRole: varchar('ai_target_role', { length: 50 }), // editor / setting_editor / writer / null
   content: text('content').notNull(),
   preview: text('preview'), // 预览内容
   price: integer('price').default(0), // 价格（分），0=免费
@@ -371,6 +403,7 @@ export const templates = pgTable('templates', {
   importCount: integer('import_count').default(0),
   commentsCount: integer('comments_count').default(0),
   likesCount: integer('likes_count').default(0),
+  deletedAt: timestamp('deleted_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
@@ -421,6 +454,7 @@ export const userTemplates = pgTable('user_templates', {
   content: text('content').notNull(),
   source: varchar('source', { length: 20 }).default('import'), // import / custom
   category: varchar('category', { length: 100 }), // methodology / structure / style / setting / ai_prompt
+  aiTargetRole: varchar('ai_target_role', { length: 50 }), // editor / setting_editor / writer / null
   description: text('description'),
   isFromPurchase: boolean('is_from_purchase').default(false),
   canRepublish: boolean('can_republish').default(true),
@@ -553,7 +587,7 @@ export const userSprites = pgTable('user_sprites', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: uuid('user_id').notNull().unique().references(() => users.id),
   species: varchar('species', { length: 20 }),     // plant / animal / element（孵化后设置）
-  variant: varchar('variant', { length: 50 }),     // sunflower / fox / wind（孵化后设置）
+  variant: varchar('variant', { length: 50 }),     // sunflower / orange-cat / wind（孵化后设置）
   level: integer('level').notNull().default(1),
   customName: varchar('custom_name', { length: 100 }),
   userNickname: varchar('user_nickname', { length: 100 }),
@@ -565,6 +599,7 @@ export const userSprites = pgTable('user_sprites', {
   positionY: integer('position_y').default(80),
   isHatched: boolean('is_hatched').default(false),
   guideStep: integer('guide_step').default(0),
+  guideRewardClaimed: boolean('guide_reward_claimed').default(false),
   secretShopFound: boolean('secret_shop_found').default(false),
   beanBalance: integer('bean_balance').default(0),
   totalBeanSpent: integer('total_bean_spent').default(0),
@@ -742,6 +777,8 @@ export const genrePresets = pgTable('genre_presets', {
   agentRole: varchar('agent_role', { length: 50 }).notNull(),
   systemPrompt: text('system_prompt').notNull(),
   description: text('description'),
+  category: varchar('category', { length: 50 }),
+  stylePrompt: text('style_prompt'),
   sortOrder: integer('sort_order').default(0),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { trpc } from '@/lib/trpc';
 import { ChatPanel } from '@/components/chat/chat-panel';
+import { exportOutline } from '@/lib/outline-export';
 
 // 简易弹窗组件
 function Dialog({ title, onClose, onConfirm, children }: {
@@ -38,17 +39,27 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
   const [showDeleted, setShowDeleted] = useState(false);
   const [creationMode, setCreationMode] = useState<CreationMode>('manual');
   const [chatContext, setChatContext] = useState<{ roleKey: string; contextPrompt: string } | null>(null);
+  // AI 修改覆盖：当前编辑的实体
+  const [aiEditEntity, setAiEditEntity] = useState<{ entityType: 'volume' | 'unit' | 'chapter' | 'setting'; id: string; title: string; content: string } | null>(null);
+  const [aiEditChatOpen, setAiEditChatOpen] = useState(false);
+
+  // 导出相关状态
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportMode, setExportMode] = useState<'selected' | 'all'>('all');
+  const [selectedChapters, setSelectedChapters] = useState<Set<string>>(new Set());
+  const [exportFormat, setExportFormat] = useState<'docx' | 'pdf'>('docx');
+  const [exporting, setExporting] = useState(false);
 
   // 加载完整大纲树（用于 AI 创作上下文）
   const { data: outlineTree } = trpc.project.getOutlineTree.useQuery(
     { projectId },
-    { enabled: chatOpen },
+    { enabled: chatOpen || aiEditChatOpen },
   );
 
-  // 加载前一卷梗概和已定稿章节（用于新建卷时 AI 上下文）
-  const { data: prevVolumeContext } = trpc.workflow.getOutline.useQuery(
+  // 加载故事脉络（用于 editor 角色）
+  const { data: storyNarrative } = trpc.project.getNarrative.useQuery(
     { projectId },
-    { enabled: false },
+    { enabled: chatOpen || aiEditChatOpen },
   );
 
   // 数据查询
@@ -86,143 +97,234 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
     setDialog(type);
   };
 
-  // AI 创作：关闭弹窗，打开 ChatPanel
-  const handleAiCreation = async () => {
-    if (dialog === 'volume') {
-      // 新建卷 AI：以定稿正文为准，生成前一卷剧情梗概、关键剧情、设定、物资清单、前后衔接
-      const outline = await utils.client.workflow.getOutline.query({ projectId });
-      const settings = await utils.client.project.listSettings.query({ projectId });
-      let contextPrompt = '';
-      if (outline && outline.length > 0) {
-        const lastVol = outline[outline.length - 1];
-        // 收集前一卷所有已定稿章节
-        const finalizedChapters: Array<{ title: string; synopsis: string; unitTitle: string }> = [];
-        for (const unit of (lastVol as any).units || []) {
-          for (const ch of unit.chapters || []) {
-            if (ch.status === 'final') {
-              finalizedChapters.push({ title: ch.title, synopsis: ch.synopsis || '', unitTitle: unit.title });
-            }
-          }
+  // AI 修改：打开 ChatPanel，带入已有内容作为上下文
+  const handleAiEditOutline = async (entityType: 'volume' | 'unit' | 'chapter', id: string, title: string, synopsis: string | null | undefined) => {
+    let content = synopsis || '';
+    let contextPrompt = '';
+
+    // 加载项目设定作为参考
+    const settings = await utils.client.project.listSettings.query({ projectId });
+
+    if (entityType === 'volume') {
+      const vol = volumeList?.find(v => v.id === id);
+      content = vol?.synopsis || '';
+      const units = await utils.client.project.listUnits.query({ volumeId: id });
+      if (units && units.length > 0) {
+        contextPrompt += `## 已有单元\n`;
+        for (const unit of units) {
+          contextPrompt += `- ${unit.title}${unit.synopsis ? '：' + unit.synopsis : ''}\n`;
         }
-        if (finalizedChapters.length > 0) {
-          contextPrompt += `## 前一卷信息\n`;
-          contextPrompt += `卷名：${lastVol.title}\n`;
-          if (lastVol.synopsis) contextPrompt += `卷梗概：${lastVol.synopsis}\n\n`;
-          contextPrompt += `## 已定稿章节列表（以定稿正文为准）\n`;
-          finalizedChapters.forEach(ch => {
-            contextPrompt += `- [${ch.unitTitle}] ${ch.title}${ch.synopsis ? '：' + ch.synopsis : ''}\n`;
-          });
-          contextPrompt += `\n请根据以上已定稿章节内容，先生成以下单元总结供用户参考（用户可后续修改覆盖）：\n`;
-          contextPrompt += `1. **剧情梗概**：前一卷的核心剧情线总结\n`;
-          contextPrompt += `2. **关键剧情**：重要转折点和里程碑事件\n`;
-          contextPrompt += `3. **设定引用**：涉及的设定（力量体系、世界观、角色等）\n`;
-          contextPrompt += `4. **物资清单**：角色获得或消耗的重要物品\n`;
-          contextPrompt += `5. **前后衔接**：与新卷的衔接建议和待解决的伏笔\n`;
-          contextPrompt += `\n然后基于以上总结，协助用户规划新的一卷大纲。\n\n`;
-        }
-        if (lastVol.synopsis && finalizedChapters.length === 0) {
-          contextPrompt += `## 前一卷梗概\n${lastVol.title}：${lastVol.synopsis}\n\n`;
-          contextPrompt += `（前一卷尚无定稿章节，请根据卷梗概进行创作）\n\n`;
-        }
+        contextPrompt += '\n';
       }
-      if (!contextPrompt) {
-        contextPrompt = '（本项目尚无前序内容，请根据项目整体构思进行创作）\n\n';
-      }
-      // 附加相关设定
-      if (settings && settings.length > 0) {
-        contextPrompt += `## 项目设定\n${settings.slice(0, 15).map(s => `[${s.category}] ${s.title}: ${s.content.slice(0, 150)}`).join('\n')}\n\n`;
-      }
-      contextPrompt += `请帮助用户构思新的一卷大纲。请询问用户关于新卷的主题、核心冲突、角色发展等，协助完成规划。`;
-      setChatContext({ roleKey: 'editor', contextPrompt });
-      setChatOpen(true);
-    } else if (dialog && typeof dialog === 'object' && dialog.type === 'unit') {
-      // 新建单元 AI：提示用户是否生成前一单元总结
-      const outline = await utils.client.workflow.getOutline.query({ projectId });
-      const settings = await utils.client.project.listSettings.query({ projectId });
-      let contextPrompt = '';
-      if (outline) {
-        const vol = dialog as { type: 'unit'; volumeId: string };
-        const targetVol = outline.find(v => v.id === vol.volumeId);
-        if (targetVol) {
-          const units = (targetVol as any).units || [];
-          if (units.length > 0) {
-            const lastUnit = units[units.length - 1];
-            // 收集前一单元已定稿章节
-            const finalizedChapters: Array<{ title: string; synopsis: string }> = [];
-            for (const ch of lastUnit.chapters || []) {
-              if (ch.status === 'final') {
-                finalizedChapters.push({ title: ch.title, synopsis: ch.synopsis || '' });
-              }
-            }
-            if (finalizedChapters.length > 0) {
-              contextPrompt += `## 前一单元总结（以定稿正文为准）\n`;
-              contextPrompt += `单元名：${lastUnit.title}\n`;
-              if (lastUnit.synopsis) contextPrompt += `单元梗概：${lastUnit.synopsis}\n\n`;
-              contextPrompt += `### 已定稿章节\n`;
-              finalizedChapters.forEach(ch => {
+    } else if (entityType === 'unit') {
+      // 从 outlineTree 查找所属卷 + 章节
+      let volTitle = '';
+      if (outlineTree) {
+        for (const vol of outlineTree) {
+          const unit = (vol as any).units?.find((u: any) => u.id === id);
+          if (unit) {
+            volTitle = vol.title;
+            content = unit.synopsis || content;
+            if (unit.chapters && unit.chapters.length > 0) {
+              contextPrompt += `## 已有章节\n`;
+              unit.chapters.forEach((ch: any) => {
                 contextPrompt += `- ${ch.title}${ch.synopsis ? '：' + ch.synopsis : ''}\n`;
               });
-              contextPrompt += `\n请根据以上内容生成单元总结，包括：剧情梗概、关键剧情、设定引用、角色变化、前后衔接。\n然后协助用户规划新的单元。\n\n`;
+              contextPrompt += '\n';
             }
-            if (!contextPrompt && lastUnit.synopsis) {
-              contextPrompt += `## 前一单元梗概\n${lastUnit.title}：${lastUnit.synopsis}\n\n`;
-            }
-          }
-          // 附加卷梗概
-          if ((targetVol as any).synopsis) {
-            contextPrompt += `## 所属卷梗概\n${targetVol.title}：${(targetVol as any).synopsis}\n\n`;
+            break;
           }
         }
       }
-      if (!contextPrompt) contextPrompt = '（该卷尚无前序内容，请根据卷的主题进行创作）\n\n';
-      if (settings && settings.length > 0) {
-        contextPrompt += `## 相关设定\n${settings.slice(0, 10).map(s => `[${s.category}] ${s.title}: ${s.content.slice(0, 150)}`).join('\n')}\n\n`;
-      }
-      contextPrompt += `请帮助用户构思新的单元大纲。`;
-      setChatContext({ roleKey: 'editor', contextPrompt });
-      setChatOpen(true);
-    } else if (dialog && typeof dialog === 'object' && dialog.type === 'chapter') {
-      // 新建章节 AI：读取前一章节梗概及相关设定
-      const outline = await utils.client.workflow.getOutline.query({ projectId });
-      let contextPrompt = '';
-      if (outline) {
-        const chDialog = dialog as { type: 'chapter'; unitId: string };
-        for (const vol of outline) {
+      if (volTitle) contextPrompt += `## 所属卷\n${volTitle}\n\n`;
+    } else if (entityType === 'chapter') {
+      let unitTitle = '';
+      let volTitle = '';
+      if (outlineTree) {
+        for (const vol of outlineTree) {
           for (const unit of (vol as any).units || []) {
-            if (unit.id === chDialog.unitId) {
+            if (unit.chapters?.some((ch: any) => ch.id === id)) {
+              volTitle = vol.title;
+              unitTitle = unit.title;
               const chapters = unit.chapters || [];
-              if (chapters.length > 0) {
-                const lastCh = chapters[chapters.length - 1];
-                if (lastCh.synopsis) contextPrompt += `## 前一章节梗概\n${lastCh.title}：${lastCh.synopsis}\n\n`;
+              const idx = chapters.findIndex((ch: any) => ch.id === id);
+              if (idx > 0 && chapters[idx - 1]?.synopsis) {
+                contextPrompt += `## 前一章节梗概\n${chapters[idx - 1].title}：${chapters[idx - 1].synopsis}\n\n`;
               }
-              // 获取相关设定
-              const settings = await utils.client.project.listSettings.query({ projectId: projectId });
-              if (settings && settings.length > 0) {
-                contextPrompt += `## 相关设定\n${settings.slice(0, 10).map(s => `[${s.category}] ${s.title}: ${s.content.slice(0, 150)}`).join('\n')}\n\n`;
-              }
+              const ch = chapters.find((c: any) => c.id === id);
+              if (ch) content = ch.synopsis || content;
               break;
             }
           }
+          if (volTitle) break;
         }
       }
-      if (!contextPrompt) contextPrompt = '（本项目尚无前序章节，请根据项目整体构思进行创作）\n\n';
-      contextPrompt += `请帮助用户创作新的章节梗概。`;
-      setChatContext({ roleKey: 'writer', contextPrompt });
-      setChatOpen(true);
+      if (volTitle) contextPrompt += `## 所属卷\n${volTitle}\n\n`;
+      if (unitTitle) contextPrompt += `## 所属单元\n${unitTitle}\n\n`;
     }
-    setDialog(null);
+
+    // 附加设定
+    if (settings && settings.length > 0) {
+      contextPrompt += `## 相关设定\n${settings.slice(0, 10).map(s => `[${s.category}] ${s.title}: ${s.content.slice(0, 150)}`).join('\n')}\n\n`;
+    }
+
+    const typeLabel = entityType === 'volume' ? '卷' : entityType === 'unit' ? '单元' : '章节';
+    contextPrompt += `## 当前修改目标\n你要修改的是**${typeLabel}**层级，实体 ID：${id}\n标题：${title}\n梗概：${content || '（暂无）'}\n\n`;
+    contextPrompt += `请帮助用户修改以上${typeLabel}内容。用户会提出修改要求，AI 进行修改后，必须输出 [ACTION:update_${entityType}] 指令以覆盖原内容。`;
+    contextPrompt += `\n注意：ACTION 指令中必须包含 "id": "${id}" 字段。`;
+
+    setAiEditEntity({ entityType, id, title, content });
+    setChatContext({ roleKey: 'editor', contextPrompt });
+    setAiEditChatOpen(true);
+  };
+
+  // AI 创作：关闭弹窗，打开 ChatPanel
+  const handleAiCreation = async () => {
+    try {
+      if (dialog === 'volume') {
+        // 新建卷 AI：以定稿正文为准，生成前一卷剧情梗概、关键剧情、设定、物资清单、前后衔接
+        const outline = await utils.client.workflow.getOutline.query({ projectId });
+        const settings = await utils.client.project.listSettings.query({ projectId });
+        let contextPrompt = '';
+        if (outline && outline.length > 0) {
+          const lastVol = outline[outline.length - 1];
+          // 收集前一卷所有已定稿章节
+          const finalizedChapters: Array<{ title: string; synopsis: string; unitTitle: string }> = [];
+          for (const unit of (lastVol as any).units || []) {
+            for (const ch of unit.chapters || []) {
+              if (ch.status === 'final') {
+                finalizedChapters.push({ title: ch.title, synopsis: ch.synopsis || '', unitTitle: unit.title });
+              }
+            }
+          }
+          if (finalizedChapters.length > 0) {
+            contextPrompt += `## 前一卷信息\n`;
+            contextPrompt += `卷名：${lastVol.title}\n`;
+            if (lastVol.synopsis) contextPrompt += `卷梗概：${lastVol.synopsis}\n\n`;
+            contextPrompt += `## 已定稿章节列表（以定稿正文为准）\n`;
+            finalizedChapters.forEach(ch => {
+              contextPrompt += `- [${ch.unitTitle}] ${ch.title}${ch.synopsis ? '：' + ch.synopsis : ''}\n`;
+            });
+            contextPrompt += `\n请根据以上已定稿章节内容，先生成以下单元总结供用户参考（用户可后续修改覆盖）：\n`;
+            contextPrompt += `1. **剧情梗概**：前一卷的核心剧情线总结\n`;
+            contextPrompt += `2. **关键剧情**：重要转折点和里程碑事件\n`;
+            contextPrompt += `3. **设定引用**：涉及的设定（力量体系、世界观、角色等）\n`;
+            contextPrompt += `4. **物资清单**：角色获得或消耗的重要物品\n`;
+            contextPrompt += `5. **前后衔接**：与新卷的衔接建议和待解决的伏笔\n`;
+            contextPrompt += `\n然后基于以上总结，协助用户规划新的一卷大纲。\n\n`;
+          }
+          if (lastVol.synopsis && finalizedChapters.length === 0) {
+            contextPrompt += `## 前一卷梗概\n${lastVol.title}：${lastVol.synopsis}\n\n`;
+            contextPrompt += `（前一卷尚无定稿章节，请根据卷梗概进行创作）\n\n`;
+          }
+        }
+        if (!contextPrompt) {
+          contextPrompt = '（本项目尚无前序内容，请根据项目整体构思进行创作）\n\n';
+        }
+        // 附加相关设定
+        if (settings && settings.length > 0) {
+          contextPrompt += `## 项目设定\n${settings.slice(0, 15).map(s => `[${s.category}] ${s.title}: ${s.content.slice(0, 150)}`).join('\n')}\n\n`;
+        }
+        contextPrompt += `请帮助用户构思新的一卷大纲。请询问用户关于新卷的主题、核心冲突、角色发展等，协助完成规划。`;
+        setChatContext({ roleKey: 'editor', contextPrompt });
+        setChatOpen(true);
+      } else if (dialog && typeof dialog === 'object' && dialog.type === 'unit') {
+        // 新建单元 AI：提示用户是否生成前一单元总结
+        const outline = await utils.client.workflow.getOutline.query({ projectId });
+        const settings = await utils.client.project.listSettings.query({ projectId });
+        let contextPrompt = '';
+        if (outline) {
+          const vol = dialog as { type: 'unit'; volumeId: string };
+          const targetVol = outline.find(v => v.id === vol.volumeId);
+          if (targetVol) {
+            const units = (targetVol as any).units || [];
+            if (units.length > 0) {
+              const lastUnit = units[units.length - 1];
+              // 收集前一单元已定稿章节
+              const finalizedChapters: Array<{ title: string; synopsis: string }> = [];
+              for (const ch of lastUnit.chapters || []) {
+                if (ch.status === 'final') {
+                  finalizedChapters.push({ title: ch.title, synopsis: ch.synopsis || '' });
+                }
+              }
+              if (finalizedChapters.length > 0) {
+                contextPrompt += `## 前一单元总结（以定稿正文为准）\n`;
+                contextPrompt += `单元名：${lastUnit.title}\n`;
+                if (lastUnit.synopsis) contextPrompt += `单元梗概：${lastUnit.synopsis}\n\n`;
+                contextPrompt += `### 已定稿章节\n`;
+                finalizedChapters.forEach(ch => {
+                  contextPrompt += `- ${ch.title}${ch.synopsis ? '：' + ch.synopsis : ''}\n`;
+                });
+                contextPrompt += `\n请根据以上内容生成单元总结，包括：剧情梗概、关键剧情、设定引用、角色变化、前后衔接。\n然后协助用户规划新的单元。\n\n`;
+              }
+              if (!contextPrompt && lastUnit.synopsis) {
+                contextPrompt += `## 前一单元梗概\n${lastUnit.title}：${lastUnit.synopsis}\n\n`;
+              }
+            }
+            // 附加卷梗概
+            if ((targetVol as any).synopsis) {
+              contextPrompt += `## 所属卷梗概\n${targetVol.title}：${(targetVol as any).synopsis}\n\n`;
+            }
+          }
+        }
+        if (!contextPrompt) contextPrompt = '（该卷尚无前序内容，请根据卷的主题进行创作）\n\n';
+        if (settings && settings.length > 0) {
+          contextPrompt += `## 相关设定\n${settings.slice(0, 10).map(s => `[${s.category}] ${s.title}: ${s.content.slice(0, 150)}`).join('\n')}\n\n`;
+        }
+        contextPrompt += `请帮助用户构思新的单元大纲。`;
+        setChatContext({ roleKey: 'editor', contextPrompt });
+        setChatOpen(true);
+      } else if (dialog && typeof dialog === 'object' && dialog.type === 'chapter') {
+        // 新建章节 AI：读取前一章节梗概及相关设定
+        const outline = await utils.client.workflow.getOutline.query({ projectId });
+        let contextPrompt = '';
+        if (outline) {
+          const chDialog = dialog as { type: 'chapter'; unitId: string };
+          for (const vol of outline) {
+            for (const unit of (vol as any).units || []) {
+              if (unit.id === chDialog.unitId) {
+                const chapters = unit.chapters || [];
+                if (chapters.length > 0) {
+                  const lastCh = chapters[chapters.length - 1];
+                  if (lastCh.synopsis) contextPrompt += `## 前一章节梗概\n${lastCh.title}：${lastCh.synopsis}\n\n`;
+                }
+                // 获取相关设定
+                const settings = await utils.client.project.listSettings.query({ projectId: projectId });
+                if (settings && settings.length > 0) {
+                  contextPrompt += `## 相关设定\n${settings.slice(0, 10).map(s => `[${s.category}] ${s.title}: ${s.content.slice(0, 150)}`).join('\n')}\n\n`;
+                }
+                break;
+              }
+            }
+          }
+        }
+        if (!contextPrompt) contextPrompt = '（本项目尚无前序章节，请根据项目整体构思进行创作）\n\n';
+        contextPrompt += `请帮助用户创作新的章节梗概。`;
+        setChatContext({ roleKey: 'writer', contextPrompt });
+        setChatOpen(true);
+      }
+      setDialog(null);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      alert(`AI 创作初始化失败：${msg}`);
+    }
   };
 
   const handleConfirm = async () => {
     if (!inputTitle.trim()) return;
-    if (dialog === 'volume') {
-      await createVolume.mutateAsync({ projectId, title: inputTitle, synopsis: inputSynopsis || undefined, sortOrder: volumeList?.length ?? 0 });
-    } else if (dialog && typeof dialog === 'object' && dialog.type === 'unit') {
-      await createUnit.mutateAsync({ volumeId: dialog.volumeId, title: inputTitle, synopsis: inputSynopsis || undefined });
-    } else if (dialog && typeof dialog === 'object' && dialog.type === 'chapter') {
-      await createChapter.mutateAsync({ unitId: dialog.unitId, title: inputTitle, synopsis: inputSynopsis || undefined });
+    try {
+      if (dialog === 'volume') {
+        await createVolume.mutateAsync({ projectId, title: inputTitle, synopsis: inputSynopsis || undefined, sortOrder: volumeList?.length ?? 0 });
+      } else if (dialog && typeof dialog === 'object' && dialog.type === 'unit') {
+        await createUnit.mutateAsync({ volumeId: dialog.volumeId, title: inputTitle, synopsis: inputSynopsis || undefined });
+      } else if (dialog && typeof dialog === 'object' && dialog.type === 'chapter') {
+        await createChapter.mutateAsync({ unitId: dialog.unitId, title: inputTitle, synopsis: inputSynopsis || undefined });
+      }
+      setDialog(null);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      alert(`创建失败：${msg}`);
     }
-    setDialog(null);
   };
 
   const statusLabel = (s: string | null) => {
@@ -231,6 +333,77 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
       case 'draft': return <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">草稿</span>;
       default: return <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">待创作</span>;
     }
+  };
+
+  // 导出功能
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      // 构建导出数据结构
+      const exportData: Awaited<ReturnType<typeof buildExportData>> = await buildExportData();
+      const success = await exportOutline(exportData, exportFormat, { includeContent: true });
+      if (success) {
+        setShowExportModal(false);
+        setSelectedChapters(new Set());
+      }
+    } catch (e: any) {
+      alert(`导出失败：${e?.message || '未知错误'}`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const buildExportData = async () => {
+    if (!volumeList) throw new Error('数据未加载');
+
+    // 构建章节ID到定稿内容的映射
+    const finalContentMap = new Map<string, string>();
+
+    const volumes: any[] = [];
+    for (const vol of volumeList) {
+      const units = await utils.client.project.listUnits.query({ volumeId: vol.id });
+      const volUnits: any[] = [];
+      for (const unit of (units || [])) {
+        const chapters = await utils.client.project.listChapters.query({ unitId: unit.id });
+        const unitChapters: any[] = [];
+        for (const ch of (chapters || [])) {
+          // 获取定稿正文
+          let finalContent: string | null = null;
+          if (ch.status === 'final') {
+            const versions = await utils.client.project.listChapterVersions.query({ chapterId: ch.id, versionType: 'final' });
+            if (versions && versions.length > 0) {
+              finalContent = versions[0].content;
+            }
+          }
+          unitChapters.push({
+            id: ch.id,
+            title: ch.title,
+            synopsis: ch.synopsis,
+            status: ch.status,
+            finalContent,
+          });
+        }
+        volUnits.push({
+          id: unit.id,
+          title: unit.title,
+          synopsis: unit.synopsis,
+          chapters: unitChapters,
+        });
+      }
+      volumes.push({
+        id: vol.id,
+        title: vol.title,
+        synopsis: vol.synopsis,
+        units: volUnits,
+      });
+    }
+
+    return {
+      projectTitle: '小说大纲',
+      projectSynopsis: null,
+      volumes,
+      selectedChapters: exportMode === 'selected' ? selectedChapters : undefined,
+    };
   };
 
   const dialogTitle = dialog === 'volume' ? '新建卷'
@@ -248,6 +421,10 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
         <div className="flex items-center justify-between mt-4 mb-6">
           <h1 className="text-2xl font-bold">大纲</h1>
           <div className="flex gap-2">
+            <button onClick={() => setShowExportModal(true)}
+              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition">
+              导出大纲
+            </button>
             <button onClick={() => setShowDeleted(!showDeleted)}
               className={`px-4 py-2 border rounded-lg text-sm font-medium transition ${showDeleted ? 'border-orange-300 text-orange-600 bg-orange-50' : 'border-gray-300 text-gray-600 hover:border-gray-500'}`}>
               回收站{deletedVolumes && deletedVolumes.length > 0 ? ` (${deletedVolumes.length})` : ''}
@@ -280,7 +457,8 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
                 <VolumeItem key={vol.id} vol={vol} projectId={projectId}
                   expanded={expandedVolumes.has(vol.id)} onToggle={() => toggleVolume(vol.id)}
                   expandedUnits={expandedUnits} toggleUnit={toggleUnit}
-                  statusLabel={statusLabel} openDialog={openDialog} />
+                  statusLabel={statusLabel} openDialog={openDialog}
+                  onAiEdit={handleAiEditOutline} onAiEditChild={handleAiEditOutline} />
               ))}
             </div>
           )
@@ -329,17 +507,167 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
         </Dialog>
       )}
 
+      {/* 导出大纲对话框 */}
+      {showExportModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { setShowExportModal(false); setSelectedChapters(new Set()); }}>
+          <div className="bg-white rounded-xl p-6 w-full max-w-lg shadow-lg" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-bold mb-4">导出大纲</h3>
+            <div className="space-y-4">
+              {/* 导出范围 */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">导出范围</label>
+                <div className="flex gap-2">
+                  <button onClick={() => setExportMode('all')}
+                    className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${
+                      exportMode === 'all'
+                        ? 'bg-gray-900 text-white border-2 border-gray-900'
+                        : 'border-2 border-gray-200 text-gray-500 hover:border-gray-400'
+                    }`}>
+                    全部导出
+                  </button>
+                  <button onClick={() => setExportMode('selected')}
+                    className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${
+                      exportMode === 'selected'
+                        ? 'bg-gray-900 text-white border-2 border-gray-900'
+                        : 'border-2 border-gray-200 text-gray-500 hover:border-gray-400'
+                    }`}>
+                    选择导出
+                  </button>
+                </div>
+              </div>
+
+              {/* 选择章节（仅在选择模式下显示） */}
+              {exportMode === 'selected' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">选择定稿章节</label>
+                  <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-2 space-y-1">
+                    {volumeList?.map(vol => (
+                      <div key={vol.id} className="text-xs font-medium text-gray-500 mt-1">{vol.title}</div>
+                    ))}
+                    <ChapterSelector projectId={projectId} selected={selectedChapters} onChange={setSelectedChapters} />
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">已选择 {selectedChapters.size} 个章节</p>
+                </div>
+              )}
+
+              {/* 导出格式 */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">导出格式</label>
+                <div className="flex gap-2">
+                  <button onClick={() => setExportFormat('docx')}
+                    className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${
+                      exportFormat === 'docx'
+                        ? 'bg-gray-900 text-white border-2 border-gray-900'
+                        : 'border-2 border-gray-200 text-gray-500 hover:border-gray-400'
+                    }`}>
+                    DOCX
+                  </button>
+                  <button onClick={() => setExportFormat('pdf')}
+                    className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${
+                      exportFormat === 'pdf'
+                        ? 'bg-gray-900 text-white border-2 border-gray-900'
+                        : 'border-2 border-gray-200 text-gray-500 hover:border-gray-400'
+                    }`}>
+                    PDF（VIP）
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button onClick={() => { setShowExportModal(false); setSelectedChapters(new Set()); }}
+                className="px-4 py-2 text-gray-600 hover:text-gray-900">取消</button>
+              <button onClick={handleExport} disabled={exporting}
+                className="flex-1 py-2 bg-gray-900 text-white rounded-lg font-medium hover:bg-gray-800 transition disabled:opacity-50">
+                {exporting ? '导出中...' : '导出'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ChatPanel open={chatOpen} onClose={() => { setChatOpen(false); setChatContext(null); }}
         projectId={projectId} conversationType="outline"
         roleKey={chatContext?.roleKey as 'editor' | 'writer' ?? 'editor'}
         title={chatContext?.roleKey === 'writer' ? 'AI 章节创作' : 'AI 构思'}
         fullOutline={outlineTree}
+        storyNarrative={storyNarrative}
         customContextPrompt={chatContext?.contextPrompt}
-        onActionConfirmed={() => {
+        onNavigateToSettings={() => {
+          window.location.href = `/project/${projectId}/settings`;
+        }}
+        onNavigateToOutline={() => {
+          // 已在大纲页面，关闭对话框即可
+          setChatOpen(false);
+          setChatContext(null);
+        }}
+        onNavigateToChapter={() => {
+          // 跳转到第一个章节的正文创作页面
+          window.location.href = `/project/${projectId}/chapters`;
+        }}
+        onActionConfirmed={(type, entity: unknown) => {
           utils.project.listVolumes.invalidate({ projectId });
           utils.project.listUnits.invalidate();
           utils.project.listChapters.invalidate();
+
+          // 自动展开新创建的项目，确保用户能立即看到内容
+          const e = entity as { id?: string } | undefined;
+          if (!e?.id) return;
+          if (type === 'volume') {
+            setExpandedVolumes(prev => {
+              const next = new Set(prev);
+              next.add(e.id!);
+              return next;
+            });
+          } else if (type === 'unit') {
+            setExpandedUnits(prev => {
+              const next = new Set(prev);
+              next.add(e.id!);
+              return next;
+            });
+          }
         }} />
+
+      {/* AI 修改 ChatPanel */}
+      <ChatPanel open={aiEditChatOpen} onClose={() => { setAiEditChatOpen(false); setAiEditEntity(null); setChatContext(null); }}
+        projectId={projectId} conversationType="outline"
+        roleKey={chatContext?.roleKey as 'editor' ?? 'editor'}
+        title={`AI 修改 — ${aiEditEntity?.title || ''}`}
+        fullOutline={outlineTree}
+        storyNarrative={storyNarrative}
+        customContextPrompt={chatContext?.contextPrompt}
+        onNavigateToSettings={() => {
+          window.location.href = `/project/${projectId}/settings`;
+        }}
+        onNavigateToOutline={() => {
+          setAiEditChatOpen(false);
+          setChatContext(null);
+        }}
+        onNavigateToChapter={() => {
+          window.location.href = `/project/${projectId}/chapters`;
+        }}
+        onActionConfirmed={(type, entity: unknown) => {
+          utils.project.listVolumes.invalidate({ projectId });
+          utils.project.listUnits.invalidate();
+          utils.project.listChapters.invalidate();
+
+          // 覆盖确认：自动展开对应的卷/单元
+          const e = entity as { id?: string } | undefined;
+          if (type === 'volume' && e?.id) {
+            setExpandedVolumes(prev => { const n = new Set(prev); n.add(e.id!); return n; });
+          } else if (type === 'unit' && e?.id) {
+            setExpandedUnits(prev => { const n = new Set(prev); n.add(e.id!); return n; });
+          }
+        }} />
+
+      {/* 悬浮按钮：聊聊构思 */}
+      {!chatOpen && (
+        <button
+          onClick={() => { setChatContext({ roleKey: 'editor', contextPrompt: '' }); setChatOpen(true); }}
+          className="fixed bottom-8 left-8 bg-gray-900 text-white rounded-full px-5 py-3 text-sm font-medium hover:bg-gray-800 transition shadow-lg hover:shadow-xl z-40"
+        >
+          聊聊构思
+        </button>
+      )}
     </div>
   );
 }
@@ -413,13 +741,15 @@ function DeletedVolumeCard({ vol, projectId, expanded, onToggle }: {
 }
 
 // ========== 卷组件 — 内部查询单元列表 ==========
-function VolumeItem({ vol, projectId, expanded, onToggle, expandedUnits, toggleUnit, statusLabel, openDialog }: {
+function VolumeItem({ vol, projectId, expanded, onToggle, expandedUnits, toggleUnit, statusLabel, openDialog, onAiEdit, onAiEditChild }: {
   vol: { id: string; title: string; synopsis?: string | null };
   projectId: string; expanded: boolean;
   onToggle: () => void;
   expandedUnits: Set<string>; toggleUnit: (id: string) => void;
   statusLabel: (s: string | null) => React.ReactNode;
   openDialog: (d: DialogType) => void;
+  onAiEdit: (entityType: 'volume', id: string, title: string, synopsis: string | null | undefined) => void;
+  onAiEditChild: (entityType: 'unit' | 'chapter', id: string, title: string, synopsis: string | null | undefined) => void;
 }) {
   const { data: unitList } = trpc.project.listUnits.useQuery(
     { volumeId: vol.id }, { enabled: expanded },
@@ -476,6 +806,11 @@ function VolumeItem({ vol, projectId, expanded, onToggle, expandedUnits, toggleU
         <button onClick={onToggle} className="flex-1 text-left px-5 py-4 flex items-center justify-between">
           <span className="font-semibold">{vol.title}</span>
           <span className="text-gray-400 text-sm">{expanded ? '▼' : '▶'}</span>
+        </button>
+        <button onClick={() => onAiEdit('volume', vol.id, vol.title, vol.synopsis)}
+          className="px-3 text-xs text-indigo-500 hover:text-indigo-700 transition"
+          title="AI 修改">
+          AI 修改
         </button>
         <button onClick={handleDelete} disabled={deleteVolume.isPending}
           className="px-3 text-xs text-red-400 hover:text-red-600 transition disabled:opacity-50"
@@ -542,7 +877,8 @@ function VolumeItem({ vol, projectId, expanded, onToggle, expandedUnits, toggleU
           {unitList?.map(unit => (
             <UnitItem key={unit.id} unit={unit} projectId={projectId} volumeId={vol.id}
               expanded={expandedUnits.has(unit.id)} onToggle={() => toggleUnit(unit.id)}
-              statusLabel={statusLabel} openDialog={openDialog} />
+              statusLabel={statusLabel} openDialog={openDialog}
+              onAiEdit={onAiEditChild} onAiEditChapter={onAiEditChild} />
           ))}
           {unitList?.length === 0 && <p className="text-sm text-gray-400 px-4">暂无单元</p>}
           <button onClick={() => openDialog({ type: 'unit', volumeId: vol.id })}
@@ -566,12 +902,14 @@ function VolumeItem({ vol, projectId, expanded, onToggle, expandedUnits, toggleU
 }
 
 // ========== 单元组件 — 内部查询章节列表 ==========
-function UnitItem({ unit, projectId, volumeId, expanded, onToggle, statusLabel, openDialog }: {
+function UnitItem({ unit, projectId, volumeId, expanded, onToggle, statusLabel, openDialog, onAiEdit, onAiEditChapter }: {
   unit: { id: string; title: string; synopsis?: string | null };
   projectId: string; volumeId: string;
   expanded: boolean; onToggle: () => void;
   statusLabel: (s: string | null) => React.ReactNode;
   openDialog: (d: DialogType) => void;
+  onAiEdit: (entityType: 'unit', id: string, title: string, synopsis: string | null | undefined) => void;
+  onAiEditChapter: (entityType: 'chapter', id: string, title: string, synopsis: string | null | undefined) => void;
 }) {
   const { data: chapterList } = trpc.project.listChapters.useQuery(
     { unitId: unit.id }, { enabled: expanded },
@@ -631,6 +969,11 @@ function UnitItem({ unit, projectId, volumeId, expanded, onToggle, statusLabel, 
           </div>
           <span className="text-gray-400 text-xs ml-2 shrink-0 mt-0.5">{expanded ? '▼' : '▶'}</span>
         </button>
+        <button onClick={() => onAiEdit('unit', unit.id, unit.title, unit.synopsis)}
+          className="px-2 text-xs text-indigo-500 hover:text-indigo-700 transition"
+          title="AI 修改">
+          AI 修改
+        </button>
         <button onClick={handleDelete} disabled={deleteUnit.isPending}
           className="px-2 text-xs text-red-400 hover:text-red-600 transition disabled:opacity-50"
           title="删除单元">
@@ -689,7 +1032,8 @@ function UnitItem({ unit, projectId, volumeId, expanded, onToggle, statusLabel, 
       {expanded && (
         <div className="px-4 pb-3 space-y-1">
           {chapterList?.map(ch => (
-            <ChapterRow key={ch.id} ch={ch} projectId={projectId} unitId={unit.id} />
+            <ChapterRow key={ch.id} ch={ch} projectId={projectId} unitId={unit.id}
+              onAiEdit={onAiEditChapter} />
           ))}
           {chapterList?.length === 0 && <p className="text-xs text-gray-400 px-3">暂无章节</p>}
           <button onClick={() => openDialog({ type: 'chapter', unitId: unit.id })}
@@ -712,9 +1056,10 @@ function UnitItem({ unit, projectId, volumeId, expanded, onToggle, statusLabel, 
 }
 
 // ========== 章节行 ==========
-function ChapterRow({ ch, projectId, unitId }: {
+function ChapterRow({ ch, projectId, unitId, onAiEdit }: {
   ch: { id: string; title: string; synopsis?: string | null; status: string | null };
   projectId: string; unitId: string;
+  onAiEdit: (entityType: 'chapter', id: string, title: string, synopsis: string | null | undefined) => void;
 }) {
   const utils = trpc.useUtils();
   const deleteChapter = trpc.project.deleteChapter.useMutation({
@@ -772,6 +1117,11 @@ function ChapterRow({ ch, projectId, unitId }: {
           )}
         </Link>
         {statusLabel(ch.status)}
+        <button onClick={() => onAiEdit('chapter', ch.id, ch.title, ch.synopsis)}
+          className="ml-2 px-1.5 text-xs text-indigo-400 opacity-0 group-hover:opacity-100 hover:text-indigo-600 transition"
+          title="AI 修改">
+          AI 修改
+        </button>
         <button onClick={async () => {
           if (!confirm(`确认删除章节「${ch.title}」？\n章节将被移入回收站，30 天后自动清除。`)) return;
           await deleteChapter.mutateAsync({ id: ch.id, unitId });
@@ -974,5 +1324,69 @@ function SynopsisVersionModal({ entityType, entityId, projectId, parentEntityId,
         )}
       </div>
     </div>
+  );
+}
+
+// ========== 章节选择器（用于导出） ==========
+function ChapterSelector({ projectId, selected, onChange }: {
+  projectId: string;
+  selected: Set<string>;
+  onChange: (s: Set<string>) => void;
+}) {
+  const { data: volumeList } = trpc.project.listVolumes.useQuery({ projectId });
+
+  const toggleChapter = (chId: string) => {
+    const next = new Set(selected);
+    if (next.has(chId)) next.delete(chId);
+    else next.add(chId);
+    onChange(next);
+  };
+
+  return (
+    <>
+      {volumeList?.map(vol => (
+        <VolumeChapterSelector key={vol.id} volumeId={vol.id} selected={selected} onToggle={toggleChapter} />
+      ))}
+    </>
+  );
+}
+
+function VolumeChapterSelector({ volumeId, selected, onToggle }: {
+  volumeId: string;
+  selected: Set<string>;
+  onToggle: (chId: string) => void;
+}) {
+  const { data: unitList } = trpc.project.listUnits.useQuery({ volumeId });
+
+  return (
+    <>
+      {unitList?.map(unit => (
+        <UnitChapterSelector key={unit.id} unitId={unit.id} selected={selected} onToggle={onToggle} />
+      ))}
+    </>
+  );
+}
+
+function UnitChapterSelector({ unitId, selected, onToggle }: {
+  unitId: string;
+  selected: Set<string>;
+  onToggle: (chId: string) => void;
+}) {
+  const { data: chapters } = trpc.project.listChapters.useQuery({ unitId });
+
+  return (
+    <>
+      {chapters?.filter(ch => ch.status === 'final').map(ch => (
+        <label key={ch.id} className="flex items-center gap-2 px-2 py-1 hover:bg-gray-50 rounded cursor-pointer">
+          <input
+            type="checkbox"
+            checked={selected.has(ch.id)}
+            onChange={() => onToggle(ch.id)}
+            className="w-4 h-4 rounded border-gray-300 text-gray-900"
+          />
+          <span className="text-sm text-gray-700">{ch.title}</span>
+        </label>
+      ))}
+    </>
   );
 }

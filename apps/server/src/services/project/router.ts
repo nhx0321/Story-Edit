@@ -4,7 +4,7 @@ import { eq, and, asc, desc, ne, isNull, or, sql, not, gte, lt, inArray } from '
 import { TRPCError } from '@trpc/server';
 import { router, protectedProcedure, verifyProjectOwner } from '../../trpc';
 import { db } from '../../db';
-import { projects, volumes, units, chapters, chapterVersions, outlineVersions, settings, aiRoles, genrePresets } from '../../db/schema';
+import { projects, volumes, units, chapters, chapterVersions, outlineVersions, settings, settingRelationships, aiRoles, genrePresets, storyNarratives } from '../../db/schema';
 import { checkSubscription, getFeatureLimits } from '../../services/subscription/gate';
 
 export const projectRouter = router({
@@ -12,9 +12,9 @@ export const projectRouter = router({
   create: protectedProcedure
     .input(z.object({
       name: z.string().min(1).max(200),
-      type: z.enum(['novel', 'screenplay', 'prompt_gen']).default('novel'),
+      type: z.enum(['novel', 'webnovel', 'screenplay', 'prompt_gen']).default('novel'),
       genre: z.string().optional(),
-      genreTag: z.enum(['xianxia', 'urban', 'apocalypse', 'romance', 'military', 'political', 'scifi', 'suspense', 'fantasy', 'historical', 'game', 'male_oriented', 'female_oriented', 'other']).optional(),
+      genreTag: z.string().optional(),
       style: z.string().optional(),
       methodology: z.string().optional(),
       config: z.record(z.unknown()).optional(),
@@ -26,34 +26,26 @@ export const projectRouter = router({
       })).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const { roles, genreTag, ...projectData } = input;
+      const { roles, genreTag, style, ...projectData } = input;
       const [project] = await db.insert(projects).values({
         userId: ctx.userId,
         ...projectData,
-        genreTag: genreTag || null,
+        genre: input.genre || null,
+        genreTag: (genreTag as any) || null,
+        style: style || null,
+        methodology: input.methodology || null,
       }).returning();
 
-      if (input.genreTag && roles?.length) {
-        // 如果有题材标签，从 genrePresets 载入预设
-        const genrePresetsData = await db.select()
-          .from(genrePresets)
-          .where(eq(genrePresets.genre, input.genreTag));
-
-        const roleMap = new Map(genrePresetsData.map(p => [p.agentRole, p.systemPrompt]));
-
+      if (roles?.length) {
+        // 使用传入的角色预设（前端已根据题材类型生成对应提示词）
         await db.insert(aiRoles).values(
           roles.map(r => ({
             projectId: project!.id,
             name: r.name,
             role: r.role,
-            systemPrompt: roleMap.get(r.role) || r.systemPrompt || '',
+            systemPrompt: r.systemPrompt || '',
             isDefault: true,
           })),
-        );
-      } else if (roles?.length) {
-        // 无题材标签时，使用原有逻辑
-        await db.insert(aiRoles).values(
-          roles.map(r => ({ projectId: project!.id, ...r })),
         );
       }
 
@@ -839,6 +831,79 @@ export const projectRouter = router({
         .returning();
       if (!updated) throw new TRPCError({ code: 'NOT_FOUND', message: '设定不存在或未被删除' });
       return { success: true };
+    }),
+
+  // ========== 设定关系 ==========
+  listRelationships: protectedProcedure
+    .input(z.object({ projectId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      await verifyProjectOwner(input.projectId, ctx.userId);
+      return db.select().from(settingRelationships)
+        .where(eq(settingRelationships.projectId, input.projectId));
+    }),
+
+  createRelationship: protectedProcedure
+    .input(z.object({
+      projectId: z.string().uuid(),
+      sourceId: z.string().uuid(),
+      targetId: z.string().uuid(),
+      relationType: z.string().max(30),
+      description: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await verifyProjectOwner(input.projectId, ctx.userId);
+      const [rel] = await db.insert(settingRelationships).values({
+        projectId: input.projectId,
+        sourceId: input.sourceId,
+        targetId: input.targetId,
+        relationType: input.relationType,
+        description: input.description || null,
+      }).returning();
+      return rel;
+    }),
+
+  deleteRelationship: protectedProcedure
+    .input(z.object({ id: z.string().uuid(), projectId: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      await verifyProjectOwner(input.projectId, ctx.userId);
+      await db.delete(settingRelationships)
+        .where(and(eq(settingRelationships.id, input.id), eq(settingRelationships.projectId, input.projectId)));
+      return { success: true };
+    }),
+
+  // ========== 故事脉络 ==========
+  createNarrative: protectedProcedure
+    .input(z.object({ projectId: z.string().uuid(), title: z.string(), content: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      await verifyProjectOwner(input.projectId, ctx.userId);
+      // 如果已有活跃脉络，先标记为历史
+      await db.update(storyNarratives).set({ status: 'archived', updatedAt: new Date() })
+        .where(and(eq(storyNarratives.projectId, input.projectId), eq(storyNarratives.status, 'active')));
+      const [narrative] = await db.insert(storyNarratives).values(input).returning();
+      return narrative;
+    }),
+
+  updateNarrative: protectedProcedure
+    .input(z.object({ id: z.string().uuid(), projectId: z.string().uuid(), title: z.string().optional(), content: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await verifyProjectOwner(input.projectId, ctx.userId);
+      const { id, projectId, ...data } = input;
+      const [updated] = await db.update(storyNarratives).set({ ...data, updatedAt: new Date() })
+        .where(and(eq(storyNarratives.id, id), eq(storyNarratives.projectId, projectId)))
+        .returning();
+      if (!updated) throw new TRPCError({ code: 'NOT_FOUND', message: '故事脉络不存在' });
+      return updated;
+    }),
+
+  getNarrative: protectedProcedure
+    .input(z.object({ projectId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      await verifyProjectOwner(input.projectId, ctx.userId);
+      const [narrative] = await db.select().from(storyNarratives)
+        .where(and(eq(storyNarratives.projectId, input.projectId), eq(storyNarratives.status, 'active')))
+        .orderBy(desc(storyNarratives.createdAt))
+        .limit(1);
+      return narrative || null;
     }),
 
   // ========== AI 角色管理 ==========

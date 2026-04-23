@@ -4,6 +4,7 @@ import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { trpc } from '@/lib/trpc';
 import { ChatPanel } from '@/components/chat/chat-panel';
+import { SettingRelationGraph } from '@/components/settings/setting-relation-graph';
 
 type DialogMode = null | 'category' | 'entry' | { type: 'edit'; id: string };
 
@@ -16,13 +17,26 @@ export default function ProjectSettingsPage({ params }: { params: { id: string }
   const [inputCategory, setInputCategory] = useState('');
   const [chatOpen, setChatOpen] = useState(false);
   const [showDeleted, setShowDeleted] = useState(false);
+  // AI 修改覆盖
+  const [aiEditSetting, setAiEditSetting] = useState<{ id: string; title: string; content: string; category: string } | null>(null);
+  const [aiEditChatOpen, setAiEditChatOpen] = useState(false);
+  const [aiEditContextPrompt, setAiEditContextPrompt] = useState('');
+  // 关系图谱
+  const [showRelationGraph, setShowRelationGraph] = useState(false);
 
   const { data: allSettings, isLoading } = trpc.project.listSettings.useQuery({ projectId });
   const { data: deletedSettings } = trpc.project.listDeletedSettings.useQuery({ projectId }, { enabled: showDeleted });
+  const { data: allRelations } = trpc.project.listRelationships.useQuery({ projectId });
   // 加载完整大纲树（用于 AI 创作上下文）
   const { data: outlineTree } = trpc.project.getOutlineTree.useQuery(
     { projectId },
-    { enabled: chatOpen },
+    { enabled: chatOpen || aiEditChatOpen },
+  );
+
+  // 加载故事脉络（用于 setting_editor 角色）
+  const { data: storyNarrative } = trpc.project.getNarrative.useQuery(
+    { projectId },
+    { enabled: chatOpen || aiEditChatOpen },
   );
   const utils = trpc.useUtils();
 
@@ -39,6 +53,16 @@ export default function ProjectSettingsPage({ params }: { params: { id: string }
     onSuccess: () => {
       utils.project.listSettings.invalidate({ projectId });
       utils.project.listDeletedSettings.invalidate({ projectId });
+    },
+  });
+  const createRelation = trpc.project.createRelationship.useMutation({
+    onSuccess: () => {
+      utils.project.listRelationships.invalidate({ projectId });
+    },
+  });
+  const deleteRelation = trpc.project.deleteRelationship.useMutation({
+    onSuccess: () => {
+      utils.project.listRelationships.invalidate({ projectId });
     },
   });
 
@@ -96,6 +120,27 @@ export default function ProjectSettingsPage({ params }: { params: { id: string }
     await restoreSetting.mutateAsync({ id, projectId });
   };
 
+  // AI 修改：打开 ChatPanel，带入已有设定内容
+  const handleAiEditSetting = async (id: string, title: string, content: string, category: string) => {
+    let ctx = `## 当前设定内容\n类目：${category}\n标题：${title}\n内容：${content || '（暂无）'}\n\n`;
+
+    // 附加其他设定作为参考
+    const otherSettings = allSettings?.filter(s => s.id !== id) || [];
+    if (otherSettings.length > 0) {
+      ctx += `## 其他相关设定（仅供参考，不要修改）\n`;
+      otherSettings.slice(0, 15).forEach(s => {
+        ctx += `[${s.category}] ${s.title}: ${s.content.slice(0, 200)}\n`;
+      });
+      ctx += '\n';
+    }
+
+    ctx += `请帮助用户修改上述设定内容。用户会提出修改要求，AI 进行修改后，输出 [ACTION:update_setting] 指令以覆盖原内容。\n指令参数需包含 id: "${id}", title, content, category。`;
+
+    setAiEditSetting({ id, title, content, category });
+    setAiEditContextPrompt(ctx);
+    setAiEditChatOpen(true);
+  };
+
   const dialogTitle = dialog === 'category' ? '新建类目' : dialog === 'entry' ? '新建词条' : dialog ? '编辑词条' : '';
 
   if (isLoading) {
@@ -111,6 +156,11 @@ export default function ProjectSettingsPage({ params }: { params: { id: string }
             <button onClick={() => setShowDeleted(!showDeleted)}
               className={`px-4 py-2 border rounded-lg text-sm font-medium transition ${showDeleted ? 'border-orange-300 text-orange-600 bg-orange-50' : 'border-gray-300 text-gray-600 hover:border-gray-500'}`}>
               回收站{deletedSettings && deletedSettings.length > 0 ? ` (${deletedSettings.length})` : ''}
+            </button>
+            <button onClick={() => setShowRelationGraph(true)}
+              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition"
+              title="设定关系图谱">
+              关系图谱
             </button>
             <button onClick={() => setChatOpen(true)}
               className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition">
@@ -191,6 +241,7 @@ export default function ProjectSettingsPage({ params }: { params: { id: string }
                   <h3 className="font-medium">{s.title}</h3>
                   <div className="flex items-center gap-2">
                     <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{s.category}</span>
+                    <button onClick={() => handleAiEditSetting(s.id, s.title, s.content, s.category)} className="text-xs text-indigo-500 hover:text-indigo-700 transition" title="AI 修改">AI 修改</button>
                     <button onClick={() => openDialog({ type: 'edit', id: s.id })} className="text-xs text-gray-400 hover:text-gray-600">编辑</button>
                     <button onClick={() => handleDelete(s.id)} className="text-xs text-red-400 hover:text-red-600">删除</button>
                   </div>
@@ -249,7 +300,22 @@ export default function ProjectSettingsPage({ params }: { params: { id: string }
         </div>
       )}
 
-      {/* 构建 AI 上下文：已有设定 + 大纲结构 */}
+      {/* 关系图谱 */}
+      {showRelationGraph && (
+        <SettingRelationGraph
+          settings={allSettings?.map(s => ({ id: s.id, category: s.category, title: s.title, content: s.content })) || []}
+          relations={allRelations?.map(r => ({ id: r.id, sourceId: r.sourceId, targetId: r.targetId, relationType: r.relationType, description: r.description })) || []}
+          onCreateRelation={(sourceId, targetId, relationType, description) => {
+            createRelation.mutate({ projectId, sourceId, targetId, relationType, description });
+          }}
+          onDeleteRelation={(id) => {
+            deleteRelation.mutate({ id, projectId });
+          }}
+          onClose={() => setShowRelationGraph(false)}
+        />
+      )}
+
+      {/* 构建 AI 上下文：已有设定（大纲由 use-chat.ts 通过 fullOutline 统一注入） */}
       {(() => {
         let ctx = '';
         if (allSettings && allSettings.length > 0) {
@@ -261,36 +327,30 @@ export default function ProjectSettingsPage({ params }: { params: { id: string }
           });
           ctx += '\n';
         }
-        if (outlineTree && outlineTree.length > 0) {
-          ctx += `## 大纲结构\n`;
-          outlineTree.forEach(vol => {
-            ctx += `卷：${vol.title}`;
-            if (vol.synopsis) ctx += ` — ${vol.synopsis}`;
-            ctx += '\n';
-            (vol as any).units?.forEach((unit: any) => {
-              ctx += `  单元：${unit.title}`;
-              if (unit.synopsis) ctx += ` — ${unit.synopsis}`;
-              ctx += '\n';
-              unit.chapters?.forEach((ch: any) => {
-                ctx += `    章节：${ch.title}`;
-                if (ch.synopsis) ctx += ` — ${ch.synopsis}`;
-                ctx += '\n';
-              });
-            });
-          });
-          ctx += '\n请确保新创建的设定与以上大纲结构保持一致。\n';
-        }
         if (!ctx) {
-          ctx = '（项目尚无大纲和设定，请根据用户的要求逐步搭建世界观和设定体系）\n\n';
+          ctx = '（项目尚无设定，请根据用户的要求逐步搭建世界观和设定体系）\n\n';
         }
         return (
           <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)}
             projectId={projectId} conversationType="settings" roleKey="setting_editor" title="AI 设定"
             fullOutline={outlineTree}
+            storyNarrative={storyNarrative}
             customContextPrompt={ctx}
-            onActionConfirmed={() => utils.project.listSettings.invalidate({ projectId })} />
+            onActionConfirmed={() => utils.project.listSettings.invalidate({ projectId })}
+            onNavigateToOutline={() => { window.location.href = `/project/${projectId}/outline`; }} />
         );
       })()}
+
+      {/* AI 修改设定 ChatPanel */}
+      <ChatPanel open={aiEditChatOpen} onClose={() => { setAiEditChatOpen(false); setAiEditSetting(null); }}
+        projectId={projectId} conversationType="settings" roleKey="setting_editor"
+        title={`AI 修改 — ${aiEditSetting?.title || ''}`}
+        fullOutline={outlineTree}
+        storyNarrative={storyNarrative}
+        customContextPrompt={aiEditContextPrompt}
+        onActionConfirmed={() => {
+          utils.project.listSettings.invalidate({ projectId });
+        }} />
     </div>
   );
 }
