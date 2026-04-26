@@ -1,10 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { trpc } from '@/lib/trpc';
 import { ChatPanel } from '@/components/chat/chat-panel';
+import { DocumentImportDialog } from '@/components/import/document-import-dialog';
 import { exportOutline } from '@/lib/outline-export';
+import { useWorkflowProgress } from '@/lib/use-workflow-progress';
+import { ProjectSidebar } from '@/components/layout/project-sidebar';
 
 // 简易弹窗组件
 function Dialog({ title, onClose, onConfirm, children }: {
@@ -30,6 +34,32 @@ type CreationMode = 'manual' | 'ai';
 
 export default function OutlinePage({ params }: { params: { id: string } }) {
   const projectId = params.id;
+  const searchParams = useSearchParams();
+  const progress = useWorkflowProgress(projectId);
+  const { data: projectData } = trpc.project.get.useQuery({ id: projectId });
+  const isPaidTemplateImport = (projectData?.config as any)?.isPaidTemplate === true;
+
+  // 处理从设定页面"将词条导入大纲"跳转过来的请求
+  useEffect(() => {
+    const importSettings = searchParams.get('importSettings');
+    const settingIds = searchParams.get('settingIds');
+    if (importSettings === 'true' && settingIds) {
+      // 清除 URL 参数
+      window.history.replaceState({}, '', `/project/${projectId}/outline`);
+      // 打开文学编辑 ChatPanel，并通知已接收设定
+      setChatContext({
+        roleKey: 'editor',
+        contextPrompt: `以下设定词条已从设定管理页面导入到大纲，请确认接收并分析对故事脉络的影响。\n选中的设定ID：${settingIds}`,
+      });
+      setChatOpen(true);
+    }
+  }, [searchParams, projectId]);
+
+  useEffect(() => {
+    const handler = () => progress.refetch();
+    window.addEventListener('workflow-step-completed', handler);
+    return () => window.removeEventListener('workflow-step-completed', handler);
+  }, [progress]);
   const [expandedVolumes, setExpandedVolumes] = useState<Set<string>>(new Set());
   const [expandedUnits, setExpandedUnits] = useState<Set<string>>(new Set());
   const [dialog, setDialog] = useState<DialogType>(null);
@@ -42,6 +72,12 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
   // AI 修改覆盖：当前编辑的实体
   const [aiEditEntity, setAiEditEntity] = useState<{ entityType: 'volume' | 'unit' | 'chapter' | 'setting'; id: string; title: string; content: string } | null>(null);
   const [aiEditChatOpen, setAiEditChatOpen] = useState(false);
+
+  // 导入文档相关
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  // 补充设定词条对话框
+  const [supplementDialogOpen, setSupplementDialogOpen] = useState(false);
+  const [selectedSupplementIds, setSelectedSupplementIds] = useState<Set<string>>(new Set());
 
   // 导出相关状态
   const [showExportModal, setShowExportModal] = useState(false);
@@ -65,6 +101,11 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
   // 数据查询
   const { data: volumeList, isLoading } = trpc.project.listVolumes.useQuery({ projectId });
   const { data: deletedVolumes } = trpc.project.listDeletedVolumes.useQuery({ projectId }, { enabled: showDeleted });
+  const { data: projectSettings } = trpc.project.listSettings.useQuery({ projectId }, {
+    enabled: supplementDialogOpen,
+  });
+  const { data: aiConfigs } = trpc.ai.listConfigs.useQuery(undefined, { enabled: importDialogOpen });
+  const configId = aiConfigs?.[0]?.id || '';
   const utils = trpc.useUtils();
 
   // mutations
@@ -310,6 +351,24 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
     }
   };
 
+  // 补充设定词条：打开勾选对话框，选择后自动注入文学编辑ChatPanel
+  const handleSupplementSettings = () => {
+    setSelectedSupplementIds(new Set());
+    setSupplementDialogOpen(true);
+  };
+
+  const confirmSupplementSettings = () => {
+    const ids = Array.from(selectedSupplementIds);
+    if (ids.length === 0) return;
+    setSupplementDialogOpen(false);
+    // 打开文学编辑ChatPanel，传入选择的设定ID
+    setChatContext({
+      roleKey: 'editor',
+      contextPrompt: `以下设定词条已导入，请确认接收并分析对故事脉络的影响。\n选中的设定ID：${ids.join(',')}`,
+    });
+    setChatOpen(true);
+  };
+
   const handleConfirm = async () => {
     if (!inputTitle.trim()) return;
     try {
@@ -416,30 +475,71 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8" data-guide-target="outline-tree">
-      <div className="max-w-3xl mx-auto">
-        <Link href={`/project/${projectId}`} className="text-sm text-gray-500 hover:text-gray-900">&larr; 返回项目</Link>
+    <div className="min-h-screen bg-gray-50 flex">
+      <ProjectSidebar
+        projectId={projectId}
+        projectName={projectData?.name || '项目'}
+        projectGenre={projectData?.genre}
+        projectStyle={projectData?.style}
+        currentPath="/outline"
+        progress={progress}
+      />
+      <main className="flex-1 p-8" data-guide-target="outline-tree">
+        <div className="max-w-3xl mx-auto">
+          <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
+            <Link href="/dashboard" className="hover:text-gray-900 transition">项目列表</Link>
+            <span className="text-gray-300">/</span>
+            <Link href={`/project/${projectId}`} className="hover:text-gray-900 transition">概览</Link>
+            <span className="text-gray-300">/</span>
+            <span className="text-gray-900 font-medium">大纲编辑</span>
+            {progress.hasChapters && <span className="text-green-500 text-xs font-bold ml-0.5" title="大纲编辑完成">✓</span>}
+            {progress.hasVolumes && !progress.hasChapters && <span className="text-amber-500 text-[10px] animate-pulse ml-0.5" title="可编辑大纲">→</span>}
+          </div>
         <div className="flex items-center justify-between mt-4 mb-6">
           <h1 className="text-2xl font-bold">大纲</h1>
           <div className="flex gap-2">
-            <button onClick={() => setShowExportModal(true)}
-              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition">
-              导出大纲
-            </button>
-            <button onClick={() => setShowDeleted(!showDeleted)}
-              className={`px-4 py-2 border rounded-lg text-sm font-medium transition ${showDeleted ? 'border-orange-300 text-orange-600 bg-orange-50' : 'border-gray-300 text-gray-600 hover:border-gray-500'}`}>
-              回收站{deletedVolumes && deletedVolumes.length > 0 ? ` (${deletedVolumes.length})` : ''}
-            </button>
+            {/* AI 构思 — 黑底白字，最左侧 */}
             <button onClick={() => setChatOpen(true)}
-              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition">
+              className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition">
               AI 构思
             </button>
             <button onClick={() => openDialog('volume')}
               className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition">
               + 新建卷
             </button>
+            <button
+              onClick={() => !isPaidTemplateImport && setShowExportModal(true)}
+              disabled={isPaidTemplateImport}
+              title={isPaidTemplateImport ? '付费模板导入的项目不支持导出' : '导出大纲'}
+              className={`px-4 py-2 border rounded-lg text-sm font-medium transition ${
+                isPaidTemplateImport
+                  ? 'border-gray-200 text-gray-300 cursor-not-allowed'
+                  : 'border-gray-300 hover:border-gray-500'
+              }`}>
+              导出大纲
+            </button>
+            {/* 导入文档 — 新按钮 */}
+            <button onClick={() => setImportDialogOpen(true)}
+              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition">
+              导入文档
+            </button>
+            {/* 补充设定词条 — 新按钮 */}
+            <button onClick={handleSupplementSettings}
+              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition">
+              补充设定词条
+            </button>
+            <button onClick={() => setShowDeleted(!showDeleted)}
+              className={`px-4 py-2 border rounded-lg text-sm font-medium transition ${showDeleted ? 'border-orange-300 text-orange-600 bg-orange-50' : 'border-gray-300 text-gray-600 hover:border-gray-500'}`}>
+              回收站{deletedVolumes && deletedVolumes.length > 0 ? ` (${deletedVolumes.length})` : ''}
+            </button>
           </div>
         </div>
+
+        {/* ===== 全书梗概编辑区（补充要求#3） ===== */}
+        <NarrativeSection
+          projectId={projectId}
+          storyNarrative={storyNarrative}
+        />
 
         {showDeleted ? (
           /* ===== 回收站视图 ===== */
@@ -463,6 +563,22 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
               ))}
             </div>
           )
+        )}
+      </div>
+
+      {/* 创作关联导航 */}
+      <div className="grid grid-cols-2 gap-4 mt-6 max-w-3xl mx-auto">
+        <Link href={`/project/${projectId}/settings`}
+          className="bg-white rounded-xl border border-gray-200 p-4 hover:border-gray-400 transition text-center">
+          <p className="text-sm font-medium text-gray-900">前往设定管理</p>
+          <p className="text-xs text-gray-400 mt-1">搭建世界观 · 补充设定体系</p>
+        </Link>
+        {progress.hasChapters && (
+          <Link href={`/project/${projectId}/chapters`}
+            className="bg-white rounded-xl border border-gray-200 p-4 hover:border-gray-400 transition text-center">
+            <p className="text-sm font-medium text-gray-900">前往正文创作</p>
+            <p className="text-xs text-gray-400 mt-1">进入章节编辑器撰写正文</p>
+          </Link>
         )}
       </div>
 
@@ -660,15 +776,63 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
           }
         }} />
 
-      {/* 悬浮按钮：聊聊构思 */}
-      {!chatOpen && (
-        <button
-          onClick={() => { setChatContext({ roleKey: 'editor', contextPrompt: '' }); setChatOpen(true); }}
-          className="fixed bottom-8 left-8 bg-gray-900 text-white rounded-full px-5 py-3 text-sm font-medium hover:bg-gray-800 transition shadow-lg hover:shadow-xl z-40"
-        >
-          聊聊构思
-        </button>
+      {/* 文档导入对话框 */}
+      <DocumentImportDialog
+        open={importDialogOpen}
+        onClose={() => setImportDialogOpen(false)}
+        projectId={projectId}
+        importTarget="outline"
+        configId={configId}
+        onImported={() => {
+          setImportDialogOpen(false);
+          utils.project.listVolumes.invalidate({ projectId });
+          utils.project.getOutlineTree.invalidate({ projectId });
+        }}
+      />
+
+      {/* 补充设定词条对话框 */}
+      {supplementDialogOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setSupplementDialogOpen(false)}>
+          <div className="bg-white rounded-xl p-6 w-full max-w-lg shadow-lg" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-bold mb-4">选择要补充到大纲的设定词条</h3>
+            <p className="text-sm text-gray-500 mb-4">勾选需要引入到故事大纲中的设定词条，确认后文学编辑将接收并分析影响。</p>
+            <div className="max-h-64 overflow-y-auto space-y-2 mb-4">
+              {!projectSettings || projectSettings.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-4">暂无设定词条</p>
+              ) : (
+                projectSettings.map(s => (
+                  <label key={s.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 cursor-pointer">
+                    <input type="checkbox" checked={selectedSupplementIds.has(s.id)}
+                      onChange={() => {
+                        const next = new Set(selectedSupplementIds);
+                        next.has(s.id) ? next.delete(s.id) : next.add(s.id);
+                        setSelectedSupplementIds(next);
+                      }}
+                      className="rounded border-gray-300" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">{s.title}</p>
+                      <p className="text-xs text-gray-400">{s.category}</p>
+                      <p className="text-xs text-gray-400 truncate">{s.content?.slice(0, 60) || '（无内容）'}</p>
+                    </div>
+                  </label>
+                ))
+              )}
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setSupplementDialogOpen(false)}
+                className="flex-1 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 transition">
+                取消
+              </button>
+              <button onClick={confirmSupplementSettings}
+                disabled={selectedSupplementIds.size === 0}
+                className="flex-1 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition disabled:opacity-50">
+                确认 ({selectedSupplementIds.size})
+              </button>
+            </div>
+          </div>
+        </div>
       )}
+      </main>
     </div>
   );
 }
@@ -1389,5 +1553,87 @@ function UnitChapterSelector({ unitId, selected, onToggle }: {
         </label>
       ))}
     </>
+  );
+}
+
+// ========== 全书梗概编辑区 ==========
+function NarrativeSection({ projectId, storyNarrative }: {
+  projectId: string;
+  storyNarrative: { id: string; title: string; content: string } | null | undefined;
+}) {
+  const utils = trpc.useUtils();
+  const [narrativeContent, setNarrativeContent] = useState('');
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const updateNarrative = trpc.project.updateNarrative.useMutation({
+    onSuccess: () => {
+      utils.project.getNarrative.invalidate({ projectId });
+    },
+  });
+
+  useEffect(() => {
+    if (storyNarrative?.content && !editing) {
+      setNarrativeContent(storyNarrative.content);
+    }
+  }, [storyNarrative?.content, editing]);
+
+  const handleSave = async () => {
+    if (!storyNarrative?.id) return;
+    setSaving(true);
+    try {
+      await updateNarrative.mutateAsync({
+        id: storyNarrative.id,
+        projectId,
+        content: narrativeContent,
+      });
+      setEditing(false);
+    } catch {
+      alert('保存失败');
+    }
+    setSaving(false);
+  };
+
+  if (!storyNarrative) return null;
+
+  return (
+    <div className="mb-6 bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+        <h3 className="text-sm font-semibold text-gray-700">全书梗概</h3>
+        <div className="flex items-center gap-2">
+          {editing ? (
+            <>
+              <button onClick={handleSave} disabled={saving}
+                className="px-3 py-1 text-xs bg-gray-900 text-white rounded-md hover:bg-gray-800 transition disabled:opacity-50">
+                {saving ? '保存中...' : '保存'}
+              </button>
+              <button onClick={() => { setEditing(false); setNarrativeContent(storyNarrative.content); }}
+                className="px-3 py-1 text-xs border border-gray-300 rounded-md hover:bg-gray-50 transition">
+                取消
+              </button>
+            </>
+          ) : (
+            <button onClick={() => setEditing(true)}
+              className="px-3 py-1 text-xs border border-gray-300 rounded-md hover:border-gray-500 transition">
+              编辑
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="p-5">
+        {editing ? (
+          <textarea
+            value={narrativeContent}
+            onChange={e => setNarrativeContent(e.target.value)}
+            className="w-full h-40 p-3 text-sm bg-gray-50 border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-1 focus:ring-gray-400 font-mono leading-relaxed"
+            placeholder="编辑全书故事脉络..."
+          />
+        ) : (
+          <div className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto">
+            {storyNarrative.content || '（暂无全书梗概，可通过 AI 构思生成）'}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

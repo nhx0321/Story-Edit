@@ -5,14 +5,62 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuthStore } from '@/lib/auth-store';
 import { trpc } from '@/lib/trpc';
+import { FeedbackDialog } from '@/components/feedback-dialog';
 
-const NAV_ITEMS = [
-  { href: '/dashboard', label: '主页' },
-  { href: '/ai-config', label: 'AI配置' },
-  { href: '/marketplace', label: '模板广场' },
-  { href: '/sprite-shop', label: '精灵商城' },
-  { href: '/settings', label: '设置' },
-];
+function getProjectHref(pathname: string): string {
+  // 如果在 /project/[id] 路径下，指向当前项目概览页
+  const match = pathname.match(/^\/project\/([^/]+)/);
+  if (match) {
+    return `/project/${match[1]}`;
+  }
+  // 其他页面指向项目列表
+  return '/dashboard';
+}
+
+function NavItems({ pathname, mounted, isAdmin }: { pathname: string; mounted: boolean; isAdmin: boolean }) {
+  const projectHref = getProjectHref(pathname);
+  const navItems = [
+    { href: '/ai-config', label: 'AI 配置' },
+    { href: projectHref, label: '项目', projectAware: true },
+    { href: '/marketplace', label: '模板广场' },
+    { href: '/settings', label: '设置' },
+  ];
+
+  return (
+    <div className="flex items-center gap-1">
+      {navItems.map(item => {
+        const isActive = item.projectAware
+          ? pathname === item.href || pathname.startsWith('/project/')
+          : pathname === item.href || pathname?.startsWith(item.href + '/');
+        const guideTarget = item.href === '/ai-config' ? 'ai-config' :
+                           item.href === '/dashboard' || item.projectAware ? 'project-list' :
+                           item.href === '/marketplace' ? 'template-list' :
+                           item.href === '/settings' ? 'settings' : '';
+        return (
+          <Link key={item.label} href={item.href}
+            data-guide-target={guideTarget}
+            className={`px-3 py-1.5 rounded-md text-sm font-medium transition ${
+              isActive
+                ? 'bg-gray-900 text-white'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}>
+            {item.label}
+          </Link>
+        );
+      })}
+      {mounted && isAdmin && (
+        <Link href="/admin/templates"
+          className={`px-3 py-1.5 rounded-md text-sm font-medium transition ${
+            pathname?.startsWith('/admin')
+              ? 'bg-gray-900 text-white'
+              : 'text-amber-600 hover:text-amber-800 hover:bg-amber-50'
+          }`}>
+          管理后台
+        </Link>
+      )}
+    </div>
+  );
+}
 
 export function Navbar() {
   const pathname = usePathname();
@@ -21,20 +69,16 @@ export function Navbar() {
   const isAdmin = useAuthStore(s => s.isAdmin());
   const [accountOpen, setAccountOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   const { data: me } = trpc.userAccount.getProfile.useQuery(undefined, { enabled: !!user });
 
-  // 精灵状态（仅已孵化用户）
-  const { data: spriteStatus } = trpc.sprite.getStatus.useQuery(undefined, {
+  // VIP 订阅状态
+  const { data: billingStatus } = trpc.billing.getStatus.useQuery(undefined, {
     enabled: !!user,
     refetchOnWindowFocus: false,
   });
-  const s = spriteStatus as any;
-  const isHatched = s?.hasSprite && s?.isHatched;
-
-  // 兑换对话框
-  const [showConvertDialog, setShowConvertDialog] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -51,13 +95,21 @@ export function Navbar() {
   }, []);
 
   // Don't show navbar on login/register pages
-  const hideNavbar = mounted && (pathname === '/login' || pathname === '/register' || pathname === '/');
+  const hideNavbar = mounted && (pathname === '/login' || pathname === '/register');
   if (hideNavbar) return null;
 
-  const convertibleDays = (spriteStatus as any)?.convertibleDays ?? 0;
-  const totalBeanSpent = s?.totalBeanSpent ?? 0;
-  const spriteLevel = s?.level ?? 0;
-  const beansForNextVip = 100 - (totalBeanSpent % 100);
+  // 计算剩余 VIP 天数（基于 billing 状态）
+  const vipRemainingDays = (() => {
+    // Premium VIP: 直接从 subscriptions.currentPeriodEnd 计算
+    if (billingStatus?.tier === 'premium') {
+      return (billingStatus as any)?.premiumDaysLeft ?? 0;
+    }
+    // 试用期
+    if (billingStatus?.tier === 'trial') {
+      return billingStatus.trialDaysLeft ?? 0;
+    }
+    return 0;
+  })();
 
   return (
     <nav className="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm" data-guide-target="navbar" suppressHydrationWarning>
@@ -65,67 +117,14 @@ export function Navbar() {
         <div className="flex items-center justify-between h-14">
           {/* Left: Logo + Nav */}
           <div className="flex items-center gap-6">
-            <Link href="/dashboard" className="font-bold text-lg text-gray-900">Story Edit</Link>
+            <Link href="/" className="font-bold text-lg text-gray-900">Story Edit</Link>
             <div className="flex items-center gap-1">
-              {NAV_ITEMS.map(item => {
-                const isActive = pathname === item.href || pathname?.startsWith(item.href + '/');
-                return (
-                  <Link key={item.href} href={item.href}
-                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition ${
-                      isActive
-                        ? 'bg-gray-900 text-white'
-                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                    }`}>
-                    {item.label}
-                  </Link>
-                );
-              })}
-              {mounted && isAdmin && (
-                <Link href="/admin/review"
-                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition ${
-                    pathname?.startsWith('/admin')
-                      ? 'bg-gray-900 text-white'
-                      : 'text-amber-600 hover:text-amber-800 hover:bg-amber-50'
-                  }`}>
-                  管理后台
-                </Link>
-              )}
+              <NavItems pathname={pathname} mounted={mounted} isAdmin={isAdmin} />
             </div>
           </div>
 
-          {/* Right: Sprite Status + Account */}
+          {/* Right: Account */}
           <div className="flex items-center gap-3">
-            {/* 精灵状态栏 */}
-            {isHatched && (
-              <div className="hidden sm:flex items-center gap-3 px-3 py-1.5 bg-gray-50 rounded-lg text-xs">
-                <span className="font-medium text-gray-700">
-                  {s?.customName || '精灵'} Lv.{spriteLevel}
-                </span>
-                <span className="text-gray-300">|</span>
-                <span className="text-green-700">
-                  已用: {totalBeanSpent}豆
-                </span>
-                <span className="text-gray-300">|</span>
-                {convertibleDays > 0 ? (
-                  <>
-                    <span className="text-green-600 font-medium">
-                      可兑换: {convertibleDays}天
-                    </span>
-                    <button
-                      onClick={() => setShowConvertDialog(true)}
-                      className="px-2 py-0.5 bg-green-600 text-white rounded hover:bg-green-700 transition"
-                    >
-                      兑换
-                    </button>
-                  </>
-                ) : (
-                  <span className="text-gray-400">
-                    再{beansForNextVip}豆兑换1天
-                  </span>
-                )}
-              </div>
-            )}
-
             {/* Account */}
             <div className="relative" ref={ref}>
               <button onClick={() => setAccountOpen(!accountOpen)}
@@ -148,15 +147,13 @@ export function Navbar() {
                     <p className="text-sm font-medium text-gray-900 truncate">{user?.nickname || '未设置昵称'}</p>
                     <p className="text-xs text-gray-500 truncate">{user?.email || '未绑定邮箱'}</p>
                   </div>
-                  {isHatched && (
-                    <Link href="/sprite-shop" onClick={() => setAccountOpen(false)}
-                      className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
-                      精灵商城
-                    </Link>
-                  )}
-                  <Link href="/ai-config" onClick={() => setAccountOpen(false)}
+                  <button onClick={() => { setFeedbackOpen(true); setAccountOpen(false); }}
+                    className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                    意见反馈
+                  </button>
+                  <Link href="/help" onClick={() => setAccountOpen(false)}
                     className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
-                    AI 配置
+                    使用帮助
                   </Link>
                   <Link href="/settings/profile" onClick={() => setAccountOpen(false)}
                     className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
@@ -175,102 +172,7 @@ export function Navbar() {
         </div>
       </div>
 
-      {/* VIP 兑换对话框 */}
-      {showConvertDialog && convertibleDays > 0 && (
-        <ConvertDialog
-          maxDays={convertibleDays}
-          onClose={() => setShowConvertDialog(false)}
-        />
-      )}
+      <FeedbackDialog open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
     </nav>
-  );
-}
-
-function ConvertDialog({ maxDays, onClose }: { maxDays: number; onClose: () => void }) {
-  const utils = trpc.useUtils();
-  const convertMutation = trpc.sprite.convertBeanToDays.useMutation();
-  const [customDays, setCustomDays] = useState<string>('');
-  const [mode, setMode] = useState<'all' | 'custom'>('all');
-
-  const handleConvert = async () => {
-    const days = mode === 'all' ? maxDays : Math.min(maxDays, parseInt(customDays) || 1);
-    if (days < 1) return;
-
-    try {
-      await convertMutation.mutateAsync({ days });
-      utils.sprite.getStatus.invalidate();
-      onClose();
-    } catch (e: any) {
-      alert(e.message || '兑换失败');
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-[360px] shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="px-6 py-4 border-b border-gray-100">
-          <h2 className="text-lg font-bold text-gray-900">兑换 VIP 时长</h2>
-        </div>
-
-        <div className="px-6 py-6">
-          <div className="mb-4">
-            <p className="text-sm text-gray-500">可兑换天数</p>
-            <p className="text-3xl font-bold text-green-600">{maxDays} 天</p>
-          </div>
-
-          <div className="space-y-3 mb-4">
-            <button
-              onClick={() => setMode('all')}
-              className={`w-full px-4 py-3 rounded-lg border text-sm font-medium transition ${
-                mode === 'all'
-                  ? 'border-green-500 bg-green-50 text-green-700'
-                  : 'border-gray-200 text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              全部兑换（{maxDays} 天）
-            </button>
-
-            <div>
-              <button
-                onClick={() => setMode('custom')}
-                className={`w-full px-4 py-3 rounded-lg border text-sm font-medium transition ${
-                  mode === 'custom'
-                    ? 'border-green-500 bg-green-50 text-green-700'
-                    : 'border-gray-200 text-gray-600 hover:bg-gray-50'
-                }`}
-              >
-                部分兑换
-              </button>
-              {mode === 'custom' && (
-                <div className="mt-2 flex items-center gap-2">
-                  <input
-                    type="number"
-                    min={1}
-                    max={maxDays}
-                    value={customDays}
-                    onChange={e => setCustomDays(e.target.value)}
-                    className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm"
-                    placeholder="输入天数"
-                  />
-                  <span className="text-sm text-gray-500">天</span>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="px-6 py-4 border-t border-gray-100 flex gap-2">
-          <button onClick={onClose}
-            className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm hover:bg-gray-200 transition">
-            取消
-          </button>
-          <button onClick={handleConvert}
-            disabled={convertMutation.isPending || (mode === 'custom' && (!customDays || parseInt(customDays) < 1))}
-            className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition disabled:opacity-50">
-            {convertMutation.isPending ? '兑换中...' : '确认兑换'}
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }

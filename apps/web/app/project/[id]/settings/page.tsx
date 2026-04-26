@@ -1,15 +1,25 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { trpc } from '@/lib/trpc';
 import { ChatPanel } from '@/components/chat/chat-panel';
 import { SettingRelationGraph } from '@/components/settings/setting-relation-graph';
+import { useWorkflowProgress } from '@/lib/use-workflow-progress';
+import { ProjectSidebar } from '@/components/layout/project-sidebar';
 
 type DialogMode = null | 'category' | 'entry' | { type: 'edit'; id: string };
 
 export default function ProjectSettingsPage({ params }: { params: { id: string } }) {
   const projectId = params.id;
+  const progress = useWorkflowProgress(projectId);
+  const { data: projectData } = trpc.project.get.useQuery({ id: projectId });
+
+  useEffect(() => {
+    const handler = () => progress.refetch();
+    window.addEventListener('workflow-step-completed', handler);
+    return () => window.removeEventListener('workflow-step-completed', handler);
+  }, [progress]);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogMode>(null);
   const [inputTitle, setInputTitle] = useState('');
@@ -23,6 +33,22 @@ export default function ProjectSettingsPage({ params }: { params: { id: string }
   const [aiEditContextPrompt, setAiEditContextPrompt] = useState('');
   // 关系图谱
   const [showRelationGraph, setShowRelationGraph] = useState(false);
+  // 将词条导入大纲
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [selectedImportIds, setSelectedImportIds] = useState<Set<string>>(new Set());
+
+  const handleImportSettingsToOutline = () => {
+    setSelectedImportIds(new Set());
+    setImportDialogOpen(true);
+  };
+
+  const confirmImportSettings = () => {
+    const ids = Array.from(selectedImportIds);
+    if (ids.length === 0) return;
+    setImportDialogOpen(false);
+    // 携带参数跳转大纲页
+    window.location.href = `/project/${projectId}/outline?importSettings=true&settingIds=${ids.join(',')}`;
+  };
 
   const { data: allSettings, isLoading } = trpc.project.listSettings.useQuery({ projectId });
   const { data: deletedSettings } = trpc.project.listDeletedSettings.useQuery({ projectId }, { enabled: showDeleted });
@@ -147,23 +173,32 @@ export default function ProjectSettingsPage({ params }: { params: { id: string }
     return <div className="min-h-screen bg-gray-50 flex items-center justify-center"><p className="text-gray-400">加载中...</p></div>;
   }
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-4xl mx-auto">
-        <Link href={`/project/${projectId}`} className="text-sm text-gray-500 hover:text-gray-900">&larr; 返回项目</Link>
+    <div className="min-h-screen bg-gray-50 flex">
+      <ProjectSidebar
+        projectId={projectId}
+        projectName={projectData?.name || '项目'}
+        projectGenre={projectData?.genre}
+        projectStyle={projectData?.style}
+        currentPath="/settings"
+        progress={progress}
+      />
+      <main className="flex-1 p-8">
+        <div className="max-w-4xl mx-auto">
+          <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
+            <Link href="/dashboard" className="hover:text-gray-900 transition">项目列表</Link>
+            <span className="text-gray-300">/</span>
+            <Link href={`/project/${projectId}`} className="hover:text-gray-900 transition">概览</Link>
+            <span className="text-gray-300">/</span>
+            <span className="text-gray-900 font-medium">设定管理</span>
+            {progress.settingComplete && <span className="text-green-500 text-xs font-bold ml-0.5" title="设定管理完成">✓</span>}
+            {progress.hasChapters && !progress.settingComplete && <span className="text-amber-500 text-[10px] animate-pulse ml-0.5" title="可开始设定">→</span>}
+          </div>
         <div className="flex items-center justify-between mt-4 mb-6">
           <h1 className="text-2xl font-bold">设定管理</h1>
           <div className="flex gap-2">
-            <button onClick={() => setShowDeleted(!showDeleted)}
-              className={`px-4 py-2 border rounded-lg text-sm font-medium transition ${showDeleted ? 'border-orange-300 text-orange-600 bg-orange-50' : 'border-gray-300 text-gray-600 hover:border-gray-500'}`}>
-              回收站{deletedSettings && deletedSettings.length > 0 ? ` (${deletedSettings.length})` : ''}
-            </button>
-            <button onClick={() => setShowRelationGraph(true)}
-              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition"
-              title="设定关系图谱">
-              关系图谱
-            </button>
+            {/* AI 设定 — 黑底白字，最左侧 */}
             <button onClick={() => setChatOpen(true)}
-              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition">
+              className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition">
               AI 设定
             </button>
             <button onClick={() => openDialog('category')}
@@ -173,6 +208,20 @@ export default function ProjectSettingsPage({ params }: { params: { id: string }
             <button onClick={() => openDialog('entry')}
               className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition">
               + 新建词条
+            </button>
+            <button onClick={() => setShowRelationGraph(true)}
+              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition"
+              title="设定关系图谱">
+              关系图谱
+            </button>
+            {/* 将词条导入大纲 — 新增按钮 */}
+            <button onClick={handleImportSettingsToOutline}
+              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition">
+              将词条导入大纲
+            </button>
+            <button onClick={() => setShowDeleted(!showDeleted)}
+              className={`px-4 py-2 border rounded-lg text-sm font-medium transition ${showDeleted ? 'border-orange-300 text-orange-600 bg-orange-50' : 'border-gray-300 text-gray-600 hover:border-gray-500'}`}>
+              回收站{deletedSettings && deletedSettings.length > 0 ? ` (${deletedSettings.length})` : ''}
             </button>
           </div>
         </div>
@@ -209,48 +258,63 @@ export default function ProjectSettingsPage({ params }: { params: { id: string }
           </div>
         ) : (
 
-        <div className="flex gap-6">
-          {/* 左侧类目列表 */}
-          <div className="w-48 shrink-0">
-            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="flex gap-0 -mx-8">
+          {/* 左侧类目列表 — 竖排紧贴ProjectSidebar */}
+          <div className="w-48 shrink-0 border-r border-gray-200 bg-white">
+            <div className="p-3 border-b border-gray-100">
+              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">设定类目</h3>
+            </div>
+            <div className="p-2 space-y-0.5">
               <button onClick={() => setActiveCategory(null)}
-                className={`w-full text-left px-4 py-3 text-sm border-b border-gray-100 transition ${!activeCategory ? 'bg-gray-900 text-white' : 'hover:bg-gray-50'}`}>
-                全部 ({allSettings?.length ?? 0})
+                className={`w-full text-left px-3 py-2 text-sm rounded-md transition ${!activeCategory ? 'bg-gray-900 text-white' : 'hover:bg-gray-100 text-gray-700'}`}>
+                <span className="font-medium">全部</span>
+                <span className="text-xs ml-2 opacity-60">({allSettings?.length ?? 0})</span>
               </button>
               {categories.map(cat => {
                 const count = allSettings?.filter(s => s.category === cat).length ?? 0;
                 return (
                   <button key={cat} onClick={() => setActiveCategory(cat)}
-                    className={`w-full text-left px-4 py-3 text-sm border-b border-gray-100 last:border-0 transition ${activeCategory === cat ? 'bg-gray-900 text-white' : 'hover:bg-gray-50'}`}>
-                    {cat} ({count})
+                    className={`w-full text-left px-3 py-2 text-sm rounded-md transition ${activeCategory === cat ? 'bg-gray-900 text-white' : 'hover:bg-gray-100 text-gray-700'}`}>
+                    <span className="truncate">{cat}</span>
+                    <span className="text-xs ml-2 opacity-60">({count})</span>
                   </button>
                 );
               })}
             </div>
           </div>
           {/* 右侧词条列表 */}
-          <div className="flex-1 space-y-3">
+          <div className="flex-1 p-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {entries.length === 0 ? (
-              <div className="text-center py-16 text-gray-400">
+              <div className="text-center py-16 text-gray-400 col-span-full">
                 <p className="mb-2">暂无设定词条</p>
                 <button onClick={() => openDialog('entry')} className="text-gray-900 font-medium hover:underline">点击新建第一个词条</button>
               </div>
             ) : entries.map(s => (
-              <div key={s.id} className="bg-white rounded-xl border border-gray-200 p-5 hover:border-gray-400 transition">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-medium">{s.title}</h3>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{s.category}</span>
-                    <button onClick={() => handleAiEditSetting(s.id, s.title, s.content, s.category)} className="text-xs text-indigo-500 hover:text-indigo-700 transition" title="AI 修改">AI 修改</button>
-                    <button onClick={() => openDialog({ type: 'edit', id: s.id })} className="text-xs text-gray-400 hover:text-gray-600">编辑</button>
-                    <button onClick={() => handleDelete(s.id)} className="text-xs text-red-400 hover:text-red-600">删除</button>
-                  </div>
-                </div>
-                <p className="text-sm text-gray-500 whitespace-pre-wrap">{s.content || '（无内容）'}</p>
-              </div>
+              <CollapsibleEntry key={s.id} s={s}
+                onAiEdit={() => handleAiEditSetting(s.id, s.title, s.content, s.category)}
+                onEdit={() => openDialog({ type: 'edit', id: s.id })}
+                onDelete={() => handleDelete(s.id)} />
             ))}
+            </div>
           </div>
         </div>
+        )}
+      </div>
+
+      {/* 创作关联导航 */}
+      <div className="grid grid-cols-2 gap-4 mt-6 max-w-4xl mx-auto">
+        <Link href={`/project/${projectId}/outline`}
+          className="bg-white rounded-xl border border-gray-200 p-4 hover:border-gray-400 transition text-center">
+          <p className="text-sm font-medium text-gray-900">前往大纲编辑</p>
+          <p className="text-xs text-gray-400 mt-1">调整剧情结构 · 规划卷/单元/章节</p>
+        </Link>
+        {progress.hasChapters && (
+          <Link href={`/project/${projectId}/chapters`}
+            className="bg-white rounded-xl border border-gray-200 p-4 hover:border-gray-400 transition text-center">
+            <p className="text-sm font-medium text-gray-900">前往正文创作</p>
+            <p className="text-xs text-gray-400 mt-1">进入章节编辑器撰写正文</p>
+          </Link>
         )}
       </div>
 
@@ -300,13 +364,59 @@ export default function ProjectSettingsPage({ params }: { params: { id: string }
         </div>
       )}
 
+      {/* 将词条导入大纲 对话框 */}
+      {importDialogOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setImportDialogOpen(false)}>
+          <div className="bg-white rounded-xl p-6 w-full max-w-lg shadow-lg" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-bold mb-4">选择要导入大纲的设定词条</h3>
+            <p className="text-sm text-gray-500 mb-4">勾选需要导入到故事大纲中的设定词条，确认后将跳转到大纲页。</p>
+            <div className="max-h-64 overflow-y-auto space-y-2 mb-4">
+              {(allSettings || []).length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-4">暂无设定词条</p>
+              ) : (
+                allSettings!.map(s => (
+                  <label key={s.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 cursor-pointer">
+                    <input type="checkbox" checked={selectedImportIds.has(s.id)}
+                      onChange={() => {
+                        const next = new Set(selectedImportIds);
+                        next.has(s.id) ? next.delete(s.id) : next.add(s.id);
+                        setSelectedImportIds(next);
+                      }}
+                      className="rounded border-gray-300" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">{s.title}</p>
+                      <p className="text-xs text-gray-400">{s.category}</p>
+                    </div>
+                  </label>
+                ))
+              )}
+            </div>
+            <div className="flex gap-3">
+              <button onClick={() => setSelectedImportIds(new Set(allSettings!.map(s => s.id)))}
+                className="px-4 py-2 text-xs text-gray-500 hover:text-gray-700 transition">
+                一键全部导入
+              </button>
+              <button onClick={() => setImportDialogOpen(false)}
+                className="flex-1 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 transition">
+                取消
+              </button>
+              <button onClick={confirmImportSettings}
+                disabled={selectedImportIds.size === 0}
+                className="flex-1 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition disabled:opacity-50">
+                确认导入 ({selectedImportIds.size})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 关系图谱 */}
       {showRelationGraph && (
         <SettingRelationGraph
           settings={allSettings?.map(s => ({ id: s.id, category: s.category, title: s.title, content: s.content })) || []}
           relations={allRelations?.map(r => ({ id: r.id, sourceId: r.sourceId, targetId: r.targetId, relationType: r.relationType, description: r.description })) || []}
-          onCreateRelation={(sourceId, targetId, relationType, description) => {
-            createRelation.mutate({ projectId, sourceId, targetId, relationType, description });
+          onCreateRelation={(sourceId, targetId, relationType) => {
+            createRelation.mutate({ projectId, sourceId, targetId, relationType });
           }}
           onDeleteRelation={(id) => {
             deleteRelation.mutate({ id, projectId });
@@ -351,6 +461,46 @@ export default function ProjectSettingsPage({ params }: { params: { id: string }
         onActionConfirmed={() => {
           utils.project.listSettings.invalidate({ projectId });
         }} />
+      </main>
+    </div>
+  );
+}
+
+// ========== 可折叠词条卡片组件 ==========
+function CollapsibleEntry({ s, onAiEdit, onEdit, onDelete }: {
+  s: { id: string; title: string; content: string; category: string };
+  onAiEdit: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden hover:border-gray-400 transition">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition text-left"
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-xs text-gray-400 shrink-0">{expanded ? '▼' : '▶'}</span>
+          <h3 className="font-medium text-sm truncate">{s.title}</h3>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
+          <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{s.category}</span>
+        </div>
+      </button>
+      {expanded && (
+        <div className="px-4 pb-4">
+          <p className="text-sm text-gray-500 whitespace-pre-wrap mb-3">{s.content || '（无内容）'}</p>
+          <div className="flex items-center gap-2 text-xs border-t border-gray-100 pt-2">
+            <button onClick={onAiEdit} className="text-indigo-500 hover:text-indigo-700 transition" title="AI 修改">AI 修改</button>
+            <span className="text-gray-200">|</span>
+            <button onClick={onEdit} className="text-gray-400 hover:text-gray-600 transition">编辑</button>
+            <span className="text-gray-200">|</span>
+            <button onClick={onDelete} className="text-red-400 hover:text-red-600 transition">删除</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
