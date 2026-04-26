@@ -5,7 +5,7 @@ import { TRPCError } from '@trpc/server';
 import { router, adminProcedure, adminProcedureLevel, protectedProcedure } from '../../trpc';
 import { db } from '../../db';
 import {
-  users, subscriptions, adminAuditLogs, systemPresets, artAssets, userSprites,
+  users, subscriptions, adminAuditLogs, systemPresets, artAssets, userSprites, userTokenAccounts,
 } from '../../db/schema';
 import * as artAssetService from './art-assets';
 import { fileRouter } from '../sprite/file-router';
@@ -74,10 +74,17 @@ export const adminRouter = router({
         .limit(input.limit)
         .offset(offset);
 
-      // 获取每个用户的订阅状态
+      // 获取每个用户的精灵数据（bonusDays, convertedDays）和订阅状态
       const userIds = userList.map(u => u.id);
+      let sprites: { userId: string; bonusDays: number | null; convertedDays: number | null }[] = [];
       let subs: { userId: string; status: string; currentPeriodEnd: Date | null; trialEndsAt: Date | null }[] = [];
       if (userIds.length > 0) {
+        sprites = await db.select({
+          userId: userSprites.userId,
+          bonusDays: userSprites.bonusDays,
+          convertedDays: userSprites.convertedDays,
+        }).from(userSprites)
+          .where(inArray(userSprites.userId, userIds));
         subs = await db.select({
           userId: subscriptions.userId,
           status: subscriptions.status,
@@ -86,17 +93,26 @@ export const adminRouter = router({
         }).from(subscriptions)
           .where(inArray(subscriptions.userId, userIds));
       }
+      const spriteMap = new Map(sprites.map(s => [s.userId, s]));
       const subMap = new Map(subs.map(s => [s.userId, s]));
 
       return {
         users: userList.map(u => {
+          const sprite = spriteMap.get(u.id);
           const sub = subMap.get(u.id);
+          // VIP 天数从精灵系统计算（bonusDays + convertedDays）
+          const totalVipDays = ((sprite?.bonusDays ?? 0) + (sprite?.convertedDays ?? 0));
           let vipLevel = '免费版';
-          const now = new Date();
-          if (sub?.status === 'premium' && sub.currentPeriodEnd && sub.currentPeriodEnd > now) {
-            const days = Math.ceil((sub.currentPeriodEnd.getTime() - now.getTime()) / 86400000);
+          if (totalVipDays > 365) {
+            vipLevel = '年费VIP';
+          } else if (totalVipDays > 30) {
+            vipLevel = 'VIP';
+          } else if (totalVipDays > 0) {
+            vipLevel = '体验VIP';
+          } else if (sub?.status === 'premium' && sub.currentPeriodEnd && sub.currentPeriodEnd > new Date()) {
+            const days = Math.ceil((sub.currentPeriodEnd.getTime() - Date.now()) / 86400000);
             vipLevel = days > 365 ? '年费VIP' : days > 30 ? 'VIP' : '体验VIP';
-          } else if (sub?.status === 'trial' && sub.trialEndsAt && sub.trialEndsAt > now) {
+          } else if (sub?.status === 'trial' && sub.trialEndsAt && sub.trialEndsAt > new Date()) {
             vipLevel = '体验VIP';
           }
           return { ...u, vipLevel };
@@ -105,6 +121,64 @@ export const adminRouter = router({
         page: input.page,
         limit: input.limit,
       };
+    }),
+
+  // 设置订阅计划（免费版/付费版）
+  setSubscriptionPlan: adminProcedure
+    .input(z.object({
+      userId: z.string().uuid(),
+      plan: z.enum(['free', 'premium']),
+      days: z.number().default(365),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const adminLevel = (ctx as any).adminLevel;
+      if (adminLevel === null || adminLevel > 1) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: '需要一级及以上管理权限' });
+      }
+
+      if (input.plan === 'free') {
+        // 设为免费版：清除订阅记录
+        await db.delete(subscriptions).where(eq(subscriptions.userId, input.userId));
+        // 同时清空 userSprites bonusDays
+        await db.update(userSprites)
+          .set({ bonusDays: 0 })
+          .where(eq(userSprites.userId, input.userId));
+      } else {
+        // 设为付费版：创建/更新 premium 订阅
+        const newEnd = new Date();
+        newEnd.setDate(newEnd.getDate() + input.days);
+        const [sub] = await db.select({ id: subscriptions.id })
+          .from(subscriptions).where(eq(subscriptions.userId, input.userId));
+        if (sub) {
+          await db.update(subscriptions).set({
+            status: 'premium',
+            currentPeriodStart: new Date(),
+            currentPeriodEnd: newEnd,
+          }).where(eq(subscriptions.id, sub.id));
+        } else {
+          await db.insert(subscriptions).values({
+            userId: input.userId,
+            status: 'premium',
+            currentPeriodStart: new Date(),
+            currentPeriodEnd: newEnd,
+          });
+        }
+        // 同步 bonusDays
+        await db.update(userSprites)
+          .set({ bonusDays: input.days })
+          .where(eq(userSprites.userId, input.userId));
+      }
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel,
+        action: 'set_subscription_plan',
+        targetType: 'user',
+        targetId: input.userId,
+        details: { plan: input.plan, days: input.days },
+      });
+
+      return { ok: true, plan: input.plan };
     }),
 
   // 增减付费时长
@@ -141,6 +215,24 @@ export const adminRouter = router({
           currentPeriodEnd: newEnd,
           status: newEnd > new Date() ? 'premium' : 'expired',
         }).where(eq(subscriptions.id, sub.id));
+      }
+
+      // 同步到 userSprites.bonusDays（VIP 时长）
+      const [sprite] = await db.select({ bonusDays: userSprites.bonusDays })
+        .from(userSprites).where(eq(userSprites.userId, input.userId));
+
+      if (!sprite) {
+        // 用户尚未孵化精灵，创建记录
+        await db.insert(userSprites).values({
+          userId: input.userId,
+          bonusDays: input.days,
+        });
+      } else {
+        // 已有精灵记录，增减 bonusDays
+        const newBonusDays = Math.max(0, (sprite.bonusDays ?? 0) + input.days);
+        await db.update(userSprites)
+          .set({ bonusDays: newBonusDays })
+          .where(eq(userSprites.userId, input.userId));
       }
 
       await logAudit({
@@ -269,14 +361,19 @@ export const adminRouter = router({
           userId: input.userId,
           beanBalance: 0,
           totalBeanSpent: 0,
+          totalXp: 0,
           level: 1,
           customName: null,
+          isHatched: false,
+          guideStep: 0,
         });
-        sprite = { beanBalance: 0 };
+        // 重新获取以确保数据正确
+        [sprite] = await db.select({ beanBalance: userSprites.beanBalance })
+          .from(userSprites).where(eq(userSprites.userId, input.userId));
       }
 
       // 检查余额是否足够（减少时）
-      if (input.amount < 0 && (sprite.beanBalance ?? 0) < Math.abs(input.amount)) {
+      if (input.amount < 0 && (sprite?.beanBalance ?? 0) < Math.abs(input.amount)) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: '用户精灵豆余额不足' });
       }
 
@@ -561,8 +658,8 @@ export const adminRouter = router({
         },
         {
           category: 'ai_role',
-          title: '小说作者',
-          content: `你是「小说作者」Agent，负责撰写章节正文。
+          title: '正文作者',
+          content: `你是「正文作者」Agent，负责撰写章节正文。
 
 [⚡ 最高优先级执行规则]
 1. 系统已向你提供完整的【本章任务书】
@@ -578,7 +675,7 @@ export const adminRouter = router({
 [总体要求]
 - 始终使用中文交流和创作
 - 定稿确认后输出 ACTION 块保存正文`,
-          description: '小说作者 AI 角色 — 根据任务书撰写章节正文',
+          description: '正文作者 AI 角色 — 根据任务书撰写章节正文',
           sortOrder: 3,
         },
         // ===== 创作经验预设 =====
@@ -689,8 +786,8 @@ export const adminRouter = router({
 5. 点击「保存」
 
 ## 3. 可用模型
-- deepseek-chat：通用对话模型（推荐日常使用）
-- deepseek-coder：代码生成专用模型
+- deepseek-v4-pro：V4旗舰版，性能最强（推荐日常使用）
+- deepseek-v4-flash：V4轻量版，速度更快、成本更低
 
 ## 4. 注意事项
 - API Key 请妥善保管，不要分享给他人
@@ -883,16 +980,39 @@ export const adminRouter = router({
 
       if (!user) throw new TRPCError({ code: 'NOT_FOUND', message: '用户不存在' });
 
-      const [sub] = await db.select().from(subscriptions).where(eq(subscriptions.userId, input.userId));
+      // 获取精灵豆余额
+      const [sprite] = await db.select({
+        beanBalance: userSprites.beanBalance,
+        bonusDays: userSprites.bonusDays,
+        convertedDays: userSprites.convertedDays,
+      }).from(userSprites).where(eq(userSprites.userId, input.userId));
+
+      // 获取Token账户余额
+      const [tokenAccount] = await db.select({
+        balance: userTokenAccounts.balance,
+        totalConsumed: userTokenAccounts.totalConsumed,
+        totalRecharged: userTokenAccounts.totalRecharged,
+      }).from(userTokenAccounts).where(eq(userTokenAccounts.userId, input.userId));
+
+      // VIP 天数 = bonusDays（管理员调整+道具获得）+ convertedDays（精灵豆兑换）
+      const totalVipDays = ((sprite?.bonusDays ?? 0) + (sprite?.convertedDays ?? 0));
+
       let vipLevel = '免费版';
-      if (sub?.status === 'premium' && sub.currentPeriodEnd && sub.currentPeriodEnd > new Date()) {
-        const days = Math.ceil((sub.currentPeriodEnd.getTime() - Date.now()) / 86400000);
-        vipLevel = days > 365 ? '年费VIP' : days > 30 ? 'VIP' : '体验VIP';
-      } else if (sub?.status === 'trial' && sub.trialEndsAt && sub.trialEndsAt > new Date()) {
+      if (totalVipDays > 365) {
+        vipLevel = '年费VIP';
+      } else if (totalVipDays > 30) {
+        vipLevel = 'VIP';
+      } else if (totalVipDays > 0) {
         vipLevel = '体验VIP';
       }
 
-      return { ...user, vipLevel, subscription: sub };
+      return {
+        ...user, vipLevel, vipDays: totalVipDays,
+        beanBalance: sprite?.beanBalance ?? 0,
+        tokenBalance: tokenAccount?.balance ?? 0,
+        tokenConsumed: tokenAccount?.totalConsumed ?? 0,
+        tokenRecharged: tokenAccount?.totalRecharged ?? 0,
+      };
     }),
 
   // ========== 美术资产管理 ==========

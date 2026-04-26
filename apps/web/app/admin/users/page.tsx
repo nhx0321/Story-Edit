@@ -9,12 +9,20 @@ export default function AdminUsersPage() {
   const [page, setPage] = useState(1);
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [selectedUserNickname, setSelectedUserNickname] = useState<string>('');
+  const [selectedUserBeanBalance, setSelectedUserBeanBalance] = useState<number>(0);
+  const [selectedUserVipDays, setSelectedUserVipDays] = useState<number>(0);
+  const [selectedUserTokenBalance, setSelectedUserTokenBalance] = useState<number>(0);
+  const [selectedUserTokenConsumed, setSelectedUserTokenConsumed] = useState<number>(0);
   const [actionType, setActionType] = useState<string | null>(null);
   const [adjustDays, setAdjustDays] = useState(0);
   const [adjustBeans, setAdjustBeans] = useState(0);
   const [banType, setBanType] = useState<'publish' | 'payment' | 'all'>('all');
 
   const { data, isLoading } = trpc.admin.listUsers.useQuery({ search: search || undefined, page, limit: 20 });
+  // 获取用户详情（包含精灵豆余额和VIP天数）
+  const { data: userDetail } = trpc.admin.getUserDetail.useQuery({ userId: selectedUser || '' }, {
+    enabled: !!selectedUser,
+  });
   const adjustSub = trpc.admin.adjustSubscription.useMutation({
     onSuccess: () => { utils.admin.listUsers.invalidate(); setSelectedUser(null); setActionType(null); setAdjustDays(0); },
     onError: (e) => alert(e.message),
@@ -35,6 +43,29 @@ export default function AdminUsersPage() {
     onSuccess: () => { utils.admin.listUsers.invalidate(); setSelectedUser(null); setActionType(null); },
     onError: (e) => alert(e.message),
   });
+  const setPlan = trpc.admin.setSubscriptionPlan.useMutation({
+    onSuccess: () => { utils.admin.listUsers.invalidate(); setSelectedUser(null); setActionType(null); },
+    onError: (e) => alert(e.message),
+  });
+
+  // 当选中用户变化时，获取详情
+  const handleSelectUser = (u: any) => {
+    setSelectedUser(u.id);
+    setSelectedUserNickname(u.nickname || '用户');
+    setActionType(null);
+    // 获取详情（精灵豆余额、VIP天数）
+    utils.client.admin.getUserDetail.query({ userId: u.id }).then(detail => {
+      setSelectedUserBeanBalance(detail.beanBalance ?? 0);
+      setSelectedUserVipDays(detail.vipDays ?? 0);
+      setSelectedUserTokenBalance((detail as any).tokenBalance ?? 0);
+      setSelectedUserTokenConsumed((detail as any).tokenConsumed ?? 0);
+    }).catch(() => {
+      setSelectedUserBeanBalance(0);
+      setSelectedUserVipDays(0);
+      setSelectedUserTokenBalance(0);
+      setSelectedUserTokenConsumed(0);
+    });
+  };
 
   const handleAction = () => {
     if (!selectedUser) return;
@@ -133,11 +164,7 @@ export default function AdminUsersPage() {
                     </td>
                     <td className="px-4 py-3 text-gray-400">{new Date(u.createdAt).toLocaleDateString('zh-CN')}</td>
                     <td className="px-4 py-3">
-                      <button onClick={() => {
-                        setSelectedUser(u.id);
-                        setSelectedUserNickname(u.nickname || '用户');
-                        setActionType(null);
-                      }}
+                      <button onClick={() => handleSelectUser(u)}
                         className="text-xs px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition">
                         管理
                       </button>
@@ -163,9 +190,19 @@ export default function AdminUsersPage() {
 
       {/* 操作弹窗 */}
       {selectedUser && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setSelectedUser(null)}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { setSelectedUser(null); setActionType(null); }}>
           <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-lg" onClick={e => e.stopPropagation()}>
-            <h3 className="font-bold text-lg mb-4">用户操作</h3>
+            <h3 className="font-bold text-lg mb-4">用户操作 — {selectedUserNickname}</h3>
+
+            {/* 用户信息 */}
+            {userDetail && (
+              <div className="mb-4 p-3 bg-gray-50 rounded-lg text-sm space-y-1">
+                <div className="flex justify-between"><span className="text-gray-500">Token余额</span><span className="font-medium">{(selectedUserTokenBalance ?? 0).toLocaleString()}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">Token累计消费</span><span className="font-medium">{(selectedUserTokenConsumed ?? 0).toLocaleString()}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">精灵豆余额</span><span className="font-medium">{userDetail.beanBalance ?? 0}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500">VIP 剩余天数</span><span className="font-medium">{userDetail.vipDays ?? 0} 天</span></div>
+              </div>
+            )}
 
             {/* 操作类型选择 */}
             {!actionType && (
@@ -173,6 +210,14 @@ export default function AdminUsersPage() {
                 <button onClick={() => setActionType('adjust')}
                   className="w-full text-left px-4 py-3 rounded-lg border hover:bg-gray-50 transition">
                   <span className="font-medium">增减 VIP 时长</span>
+                </button>
+                <button onClick={() => setActionType('setPremium')}
+                  className="w-full text-left px-4 py-3 rounded-lg border border-blue-200 hover:bg-blue-50 transition">
+                  <span className="font-medium text-blue-600">设为付费版（365天）</span>
+                </button>
+                <button onClick={() => setActionType('setFree')}
+                  className="w-full text-left px-4 py-3 rounded-lg border border-gray-200 hover:bg-gray-50 transition">
+                  <span className="font-medium text-gray-600">设为免费版</span>
                 </button>
                 <button onClick={() => setActionType('adjustBeans')}
                   className="w-full text-left px-4 py-3 rounded-lg border hover:bg-gray-50 transition">
@@ -196,6 +241,7 @@ export default function AdminUsersPage() {
             {/* 增减时长 */}
             {actionType === 'adjust' && (
               <div className="space-y-3">
+                <p className="text-sm text-gray-500">当前 VIP 剩余：<span className="font-medium">{selectedUserVipDays} 天</span></p>
                 <label className="block text-sm font-medium text-gray-700">天数（正数=增加，负数=减少）</label>
                 <input type="number" value={adjustDays} onChange={e => setAdjustDays(parseInt(e.target.value) || 0)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
@@ -210,10 +256,42 @@ export default function AdminUsersPage() {
               </div>
             )}
 
+            {/* 设为付费版 */}
+            {actionType === 'setPremium' && (
+              <div className="space-y-3">
+                <p className="text-sm text-gray-500">将 <span className="font-medium">{selectedUserNickname}</span> 设为 <span className="text-blue-600 font-medium">付费版(365天)</span></p>
+                <p className="text-xs text-gray-400">付费版用户将拥有全部功能权限，包括无限项目数、无限 AI 角色、自检、经验沉淀等。</p>
+                <div className="flex gap-2">
+                  <button onClick={() => setPlan.mutate({ userId: selectedUser!, plan: 'premium', days: 365 })} disabled={setPlan.isPending}
+                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition disabled:opacity-50">
+                    {setPlan.isPending ? '设置中...' : '确认设付费版'}
+                  </button>
+                  <button onClick={() => setActionType(null)}
+                    className="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50 transition">返回</button>
+                </div>
+              </div>
+            )}
+
+            {/* 设为免费版 */}
+            {actionType === 'setFree' && (
+              <div className="space-y-3">
+                <p className="text-sm text-gray-500">将 <span className="font-medium">{selectedUserNickname}</span> 设为 <span className="text-gray-600 font-medium">免费版</span></p>
+                <p className="text-xs text-gray-400">免费版用户受功能限制：最多1个项目、3个设定、3个AI角色，不支持自检、经验沉淀等高级功能。</p>
+                <div className="flex gap-2">
+                  <button onClick={() => setPlan.mutate({ userId: selectedUser!, plan: 'free', days: 0 })} disabled={setPlan.isPending}
+                    className="flex-1 px-4 py-2 bg-gray-600 text-white rounded-lg text-sm font-medium hover:bg-gray-700 transition disabled:opacity-50">
+                    {setPlan.isPending ? '设置中...' : '确认设免费版'}
+                  </button>
+                  <button onClick={() => setActionType(null)}
+                    className="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50 transition">返回</button>
+                </div>
+              </div>
+            )}
+
             {/* 增减精灵豆 */}
             {actionType === 'adjustBeans' && (
               <div className="space-y-3">
-                <p className="text-sm text-gray-500">用户：{selectedUserNickname}</p>
+                <p className="text-sm text-gray-500">当前精灵豆：<span className="font-medium">{selectedUserBeanBalance}</span></p>
                 <label className="block text-sm font-medium text-gray-700">数量（正数=增加，负数=减少）</label>
                 <input type="number" value={adjustBeans} onChange={e => setAdjustBeans(parseInt(e.target.value) || 0)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900" />
