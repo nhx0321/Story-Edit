@@ -27,7 +27,6 @@ interface FinalizePanelProps {
   editorContent: string;
   onFinalize: () => Promise<void>;
   saveStatus: string;
-  autoGenerate?: boolean;
 }
 
 const L0_CATEGORIES = [
@@ -52,7 +51,7 @@ const L2_CATEGORIES = [
 export function FinalizePanel({
   chapterId, projectId, chapterTitle, wordCount,
   isFinalized, currentVersionNumber, editorContent,
-  onFinalize, saveStatus, autoGenerate,
+  onFinalize, saveStatus,
 }: FinalizePanelProps) {
   const utils = trpc.useUtils();
   const { data: existingLevels } = trpc.memory.list.useQuery(
@@ -98,106 +97,6 @@ export function FinalizePanel({
       }
     }
   }, [existingLevels]);
-
-  // Auto-generate: when autoGenerate is triggered, run L0-L4 analysis then auto-save
-  useEffect(() => {
-    if (!autoGenerate || !configs || configs.length === 0) return;
-    let cancelled = false;
-    (async () => {
-      setShowL0L4(false);
-      setGenerating(true);
-      let l3Result = '';
-      let l4Result = '';
-      try {
-        // 1. 生成 L3
-        setActiveLevel('L3');
-        const l3SysMsg = { role: 'system' as const, content: '你是一名专业的小说章节分析专家。分析以下章节正文，输出 L3 章节分析报告，包括：基本信息（字数、段落数、对话密度）、剧情进展（主线推进、新角色登场、冲突密度）、写作质量评估。保持简洁。' };
-        const l3UserMsg = { role: 'user' as const, content: `请分析以下章节正文：\n\n${editorContent.slice(0, 6000)}` };
-        for await (const chunk of streamAiChat({
-          configId: configs[0].id,
-          messages: [l3SysMsg, l3UserMsg],
-          projectId,
-        })) {
-          if (cancelled) return;
-          if (chunk.content) { l3Result += chunk.content; setL3Content(l3Result); }
-          if (chunk.error) break;
-        }
-
-        // 2. 生成 L4
-        setActiveLevel('L4');
-        const l4SysMsg = { role: 'system' as const, content: '你是一名资深文学编辑。对以下章节进行高级分析，包括：读者体验预测（代入感、情感共鸣）、市场适配度、具体改进建议。保持简洁，可操作。' };
-        const l4UserMsg = { role: 'user' as const, content: `请对以下章节进行高级分析：\n\n${editorContent.slice(0, 6000)}` };
-        for await (const chunk of streamAiChat({
-          configId: configs[0].id,
-          messages: [l4SysMsg, l4UserMsg],
-          projectId,
-        })) {
-          if (cancelled) return;
-          if (chunk.content) { l4Result += chunk.content; setL4Content(l4Result); }
-          if (chunk.error) break;
-        }
-      } catch {
-        if (!cancelled) {
-          setL3Content('章节分析失败，请重试');
-          setL4Content('高级分析失败，请重试');
-        }
-      }
-      if (cancelled) return;
-      setShowL0L4(true);
-      setGenerating(false);
-      setActiveLevel(null);
-
-      // 3. 等待现有经验数据加载完成，然后自动保存到经验库
-      for (let i = 0; i < 50; i++) {
-        if (cancelled) return;
-        if (existingLevels !== undefined) break;
-        await new Promise(r => setTimeout(r, 100));
-      }
-      if (cancelled) return;
-      setSaving(true);
-      try {
-        // Build entries from existingLevels data + newly generated L3/L4
-        const existingEntries: Record<string, { level: string; category?: string; content: string }> = {};
-        if (existingLevels) {
-          for (const entry of existingLevels) {
-            const key = entry.category ? `${entry.level}:${entry.category}` : entry.level;
-            existingEntries[key] = { level: entry.level, category: entry.category || undefined, content: entry.content };
-          }
-        }
-        // Also include any user edits (state might have updates over existingLevels)
-        for (const [category, content] of Object.entries(l0Entries)) {
-          if (content.trim()) existingEntries[`L0:${category}`] = { level: 'L0', category, content };
-        }
-        for (const [category, content] of Object.entries(l1Entries)) {
-          if (content.trim()) existingEntries[`L1:${category}`] = { level: 'L1', category, content };
-        }
-        for (const [category, content] of Object.entries(l2Entries)) {
-          if (content.trim()) existingEntries[`L2:${category}`] = { level: 'L2', category, content };
-        }
-
-        const entries = Object.values(existingEntries);
-        if (l3Result?.trim()) entries.push({ level: 'L3', content: l3Result });
-        if (l4Result?.trim()) entries.push({ level: 'L4', content: l4Result });
-
-        for (const entry of entries) {
-          await utils.client.memory.upsert.mutate({
-            projectId,
-            level: entry.level as 'L0' | 'L1' | 'L2' | 'L3' | 'L4',
-            category: entry.category,
-            content: entry.content,
-            sourceChapterId: chapterId,
-          });
-        }
-        setSaved(true);
-        utils.memory.list.invalidate({ projectId });
-        window.dispatchEvent(new CustomEvent('workflow-step-completed'));
-      } catch {
-        alert('自动保存经验失败');
-      }
-      setSaving(false);
-    })();
-    return () => { cancelled = true; };
-  }, [autoGenerate, configs, editorContent, projectId, chapterId, utils, existingLevels, l0Entries, l1Entries, l2Entries]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleGenerateL0L4 = async () => {
     if (!configs || configs.length === 0) {
@@ -315,7 +214,7 @@ export function FinalizePanel({
 
   if (isFinalized) {
     return (
-      <div className="max-w-3xl mx-auto">
+      <div className="max-w-3xl mx-auto space-y-6">
         <div className="bg-white rounded-xl border border-gray-200 p-6">
           <div className="text-center py-6">
             <p className="text-green-600 text-lg font-medium mb-2">已定稿</p>
@@ -326,6 +225,65 @@ export function FinalizePanel({
             className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium transition disabled:opacity-50">
             {saveStatus === 'saving' ? '保存中...' : '重新定稿'}
           </button>
+        </div>
+
+        {/* 总结经验 */}
+        <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold">L0-L4 经验分析</h2>
+            {!showL0L4 ? (
+              <button onClick={handleGenerateL0L4} disabled={generating}
+                className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition disabled:opacity-50">
+                {generating ? '分析中...' : '总结经验'}
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button onClick={handleSaveAnalysis} disabled={saving}
+                  className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition disabled:opacity-50">
+                  {saving ? '保存中...' : saved ? '已保存 ✓' : '保存到经验库'}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {generating && (
+            <div className="flex items-center gap-2 text-sm text-gray-400 mb-4">
+              <span className="animate-spin w-4 h-4 border-2 border-gray-300 border-t-gray-900 rounded-full" />
+              <span>正在生成 {activeLevel === 'L0' ? '基础经验' : activeLevel === 'L1' ? '写作经验' : activeLevel === 'L2' ? '伏笔追踪' : activeLevel === 'L3' ? '章节分析' : '高级分析'}...</span>
+            </div>
+          )}
+
+          {showL0L4 && (
+            <div className="space-y-6">
+              {/* L3: 章节分析 */}
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-700">L3 · 章节分析</span>
+                  <span className="text-xs text-gray-400">AI 自动生成</span>
+                </div>
+                <textarea
+                  value={l3Content}
+                  onChange={e => setL3Content(e.target.value)}
+                  className="w-full h-40 p-4 text-sm font-mono bg-white resize-none focus:outline-none focus:ring-1 focus:ring-gray-400 leading-relaxed"
+                  placeholder="章节分析将在 AI 分析后生成..."
+                />
+              </div>
+
+              {/* L4: 高级分析 */}
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-700">L4 · 高级分析</span>
+                  <span className="text-xs text-gray-400">AI 自动生成</span>
+                </div>
+                <textarea
+                  value={l4Content}
+                  onChange={e => setL4Content(e.target.value)}
+                  className="w-full h-40 p-4 text-sm font-mono bg-white resize-none focus:outline-none focus:ring-1 focus:ring-gray-400 leading-relaxed"
+                  placeholder="高级分析将在 AI 分析后生成..."
+                />
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );

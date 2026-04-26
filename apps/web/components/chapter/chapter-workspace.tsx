@@ -61,7 +61,6 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
   const [chatOpen, setChatOpen] = useState(false);
   const [writingStyleOpen, setWritingStyleOpen] = useState(false);
   const [experiencePanelOpen, setExperiencePanelOpen] = useState(false);
-  const [autoGenerateExperience, setAutoGenerateExperience] = useState(false);
 
   // Get AI configs for self-check
   const { data: configs } = trpc.ai.listConfigs.useQuery(undefined, { enabled: activeTab === 'checklist' || activeTab === 'modify' || activeTab === 'finalize' });
@@ -104,13 +103,6 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
     return () => window.removeEventListener('workflow-step-completed', handler);
   }, [progress]);
 
-  // Reset autoGenerateExperience after a delay so FinalizePanel can consume it once
-  useEffect(() => {
-    if (!autoGenerateExperience) return;
-    const timer = setTimeout(() => setAutoGenerateExperience(false), 3000);
-    return () => clearTimeout(timer);
-  }, [autoGenerateExperience]);
-
   const chapter = chapterDetail?.chapter;
   const unit = chapterDetail?.unit;
   const volume = chapterDetail?.volume;
@@ -141,7 +133,6 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
         isFinal: true,
         wordCount,
       });
-      setAutoGenerateExperience(true);
       window.dispatchEvent(new CustomEvent('workflow-step-completed'));
     } catch {
       // error handled by mutation
@@ -200,15 +191,17 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
         // 支持 bullet lines: - /* / 数字编号开头
         const bulletMatch = line.match(/^[-*\d、.]+\s*/);
         const cleanLine = bulletMatch ? line.slice(bulletMatch[0].length) : line;
+        // 去掉 markdown 加粗标记 **
+        const strippedLine = cleanLine.replace(/\*\*/g, '');
 
-        if (/建议/.test(cleanLine) || /修改/.test(cleanLine) || /改为/.test(cleanLine)) {
-          suggestion = cleanLine.replace(/^(建议|修改|改为)[：:]*\s*/, '');
-        } else if (/原文/.test(cleanLine) || /问题/.test(cleanLine) || /原文内容/.test(cleanLine)) {
-          original = cleanLine.replace(/^(原文|问题|原文内容)[：:]*\s*/, '');
-        } else if (/原因/.test(cleanLine)) {
-          reason = cleanLine.replace(/^原因[：:]*\s*/, '');
-        } else if (/说明|描述|分析/.test(cleanLine)) {
-          if (!reason) reason = cleanLine.replace(/^(说明|描述|分析)[：:]*\s*/, '');
+        if (/建议/.test(strippedLine) || /修改/.test(strippedLine) || /改为/.test(strippedLine)) {
+          suggestion = strippedLine.replace(/^(建议|修改|改为)[：:]*\s*/, '');
+        } else if (/原文/.test(strippedLine) || /问题/.test(strippedLine) || /原文内容/.test(strippedLine)) {
+          original = strippedLine.replace(/^(原文|问题|原文内容)[：:]*\s*/, '');
+        } else if (/原因/.test(strippedLine)) {
+          reason = strippedLine.replace(/^原因[：:]*\s*/, '');
+        } else if (/说明|描述|分析/.test(strippedLine)) {
+          if (!reason) reason = strippedLine.replace(/^(说明|描述|分析)[：:]*\s*/, '');
         }
       }
 
@@ -627,7 +620,6 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
           {/* Tab: 定稿 */}
           {activeTab === 'finalize' && (
             <FinalizePanel
-              key={autoGenerateExperience ? 'auto-finalize' : 'manual-finalize'}
               chapterId={chapterId}
               projectId={projectId}
               chapterTitle={chapter?.title || ''}
@@ -637,7 +629,6 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
               editorContent={editorContent}
               onFinalize={handleFinalize}
               saveStatus={saveStatus}
-              autoGenerate={autoGenerateExperience}
             />
           )}
         </div>

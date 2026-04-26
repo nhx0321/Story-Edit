@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState } from 'react';
 
 export interface CheckItem {
   id: string;
@@ -17,12 +17,10 @@ interface SelfCheckPanelProps {
   generating: boolean;
   /** 解析后的检查条目 */
   items: CheckItem[];
-  /** 应用修改回调（传入建议文本） */
-  onApplySuggestion: (suggestion: string) => void;
-  /** 全部应用 */
-  onApplyAll: (suggestions: string[]) => void;
   /** 重新自检 */
   onRetry: () => void;
+  /** 跳转到修改步骤 */
+  onNavigateToModify?: () => void;
 }
 
 // 检查项类型中文映射
@@ -37,34 +35,17 @@ const TYPE_LABELS: Record<string, { label: string; color: string }> = {
 
 export function SelfCheckPanel({
   report, generating, items,
-  onApplySuggestion, onApplyAll, onRetry,
+  onRetry, onNavigateToModify,
 }: SelfCheckPanelProps) {
-  const [appliedIds, setAppliedIds] = useState<Set<string>>(new Set());
-  const [highlightedId, setHighlightedId] = useState<string | null>(null);
-  const [applyingAll, setApplyingAll] = useState(false);
-
-  const handleApply = useCallback((item: CheckItem) => {
-    onApplySuggestion(item.suggestion);
-    setAppliedIds(prev => new Set(prev).add(item.id));
-    setHighlightedId(item.id);
-    setTimeout(() => setHighlightedId(null), 2000);
-  }, [onApplySuggestion]);
-
-  const handleApplyAll = useCallback(() => {
-    setApplyingAll(true);
-    const suggestions = items
-      .filter(item => !appliedIds.has(item.id))
-      .map(item => item.suggestion);
-    onApplyAll(suggestions);
-    setAppliedIds(new Set(items.map(item => item.id)));
-    setApplyingAll(false);
-  }, [items, appliedIds, onApplyAll]);
-
   if (generating) {
     return (
       <div className="bg-white rounded-xl border border-gray-200 p-6">
         <h2 className="font-semibold mb-4">AI 自检报告</h2>
         <div className="space-y-3">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+            <span className="text-sm text-gray-500">AI正在自检中，thinking模型时间较久，请耐心等待</span>
+          </div>
           <div className="animate-pulse flex items-center gap-3">
             <div className="w-3 h-3 bg-gray-400 rounded-full" />
             <div className="h-4 bg-gray-200 rounded w-3/4" />
@@ -78,7 +59,6 @@ export function SelfCheckPanel({
             <div className="h-4 bg-gray-200 rounded w-2/3" />
           </div>
         </div>
-        {/* Show partial report if available */}
         {report && (
           <pre className="whitespace-pre-wrap text-sm text-gray-700 bg-gray-50 rounded-lg p-4 mt-4 border border-gray-100 max-h-64 overflow-y-auto">
             {report}
@@ -97,55 +77,24 @@ export function SelfCheckPanel({
       <div className="flex items-center justify-between mb-4">
         <h2 className="font-semibold">AI 自检报告</h2>
         {items.length > 0 && (
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-400">共 {items.length} 条建议</span>
-            <button onClick={handleApplyAll}
-              disabled={applyingAll || appliedIds.size === items.length}
-              className="px-3 py-1 text-xs bg-gray-900 text-white rounded-md hover:bg-gray-800 transition disabled:opacity-50">
-              {applyingAll ? '应用中...' : appliedIds.size === items.length ? '已全部应用' : '一键全部应用'}
-            </button>
-          </div>
+          <span className="text-xs text-gray-400">共 {items.length} 条建议</span>
         )}
       </div>
 
-      {/* 结构化检查条目 */}
+      {/* 结构化检查条目（只读预览） */}
       {items.length > 0 ? (
         <div className="space-y-3">
           {items.map(item => {
-            const isApplied = appliedIds.has(item.id);
-            const isHighlighted = highlightedId === item.id;
             const typeInfo = TYPE_LABELS[item.type] || TYPE_LABELS.quality;
 
             return (
-              <div
-                key={item.id}
-                className={`border rounded-lg overflow-hidden transition-all duration-300 ${
-                  isHighlighted
-                    ? 'border-green-400 shadow-md shadow-green-100'
-                    : isApplied
-                    ? 'border-green-200 bg-green-50/30'
-                    : 'border-gray-200'
-                }`}
-              >
-                {/* 头部：类型 + 状态 */}
-                <div className="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-100">
-                  <div className="flex items-center gap-2">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${typeInfo.color}`}>
-                      {typeInfo.label}
-                    </span>
-                    {isApplied && (
-                      <span className="text-xs text-green-600 font-medium">✓ 已应用</span>
-                    )}
-                  </div>
-                  {!isApplied && (
-                    <button onClick={() => handleApply(item)}
-                      className="text-xs px-3 py-1 bg-green-500 text-white rounded-md hover:bg-green-600 transition font-medium">
-                      应用修改
-                    </button>
-                  )}
+              <div key={item.id} className="border border-gray-200 rounded-lg overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 border-b border-gray-100">
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${typeInfo.color}`}>
+                    {typeInfo.label}
+                  </span>
                 </div>
 
-                {/* 内容 */}
                 <div className="px-4 py-3 space-y-2">
                   <div>
                     <p className="text-xs text-gray-400 font-medium">修改原因</p>
@@ -154,11 +103,10 @@ export function SelfCheckPanel({
                   <div className="grid grid-cols-2 gap-3">
                     <div className="bg-red-50 rounded p-2">
                       <p className="text-xs text-red-400 font-medium mb-1">原文</p>
-                      <p className="text-sm text-red-700 line-clamp-3">{item.original}</p>
+                      <p className="text-sm text-red-700">{item.original}</p>
                     </div>
                     <div className="bg-green-50 rounded p-2">
-                      <p className="text-xs text-green-400 font-medium mb-1">修改后</p>
-                      <p className="text-sm text-green-700 line-clamp-3">{item.suggestion}</p>
+                      <p className="text-sm text-green-700">{item.suggestion}</p>
                     </div>
                   </div>
                 </div>
@@ -167,18 +115,25 @@ export function SelfCheckPanel({
           })}
         </div>
       ) : (
-        /* 纯文本报告 */
         <pre className="whitespace-pre-wrap text-sm text-gray-700 bg-gray-50 rounded-lg p-4 border border-gray-100 max-h-96 overflow-y-auto">
           {report}
         </pre>
       )}
 
-      {/* 重新自检 */}
+      {/* 操作按钮组 */}
       {!generating && (
-        <button onClick={onRetry}
-          className="w-full mt-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 transition">
-          重新自检
-        </button>
+        <div className="flex gap-2 mt-4">
+          <button onClick={onRetry}
+            className="flex-1 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 transition">
+            重新自检
+          </button>
+          {onNavigateToModify && report && (
+            <button onClick={onNavigateToModify}
+              className="flex-1 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 transition">
+              导入自检到修改 →
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
