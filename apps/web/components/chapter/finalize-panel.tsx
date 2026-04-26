@@ -106,48 +106,79 @@ export function FinalizePanel({
     setGenerating(true);
     setShowL0L4(true);
 
-    // 使用 AI 流式生成 L3 章节分析
     try {
+      // L0: 创作铁律 — 本项目必须做和不能做的事项
+      setActiveLevel('L0');
+      const l0SysMsg = { role: 'system' as const, content: '你是一名资深文学编辑，擅长总结项目创作铁律。分析章节正文，提取出本项目必须遵守和必须避免的创作规则。输出格式：每个类别输出一段简洁的总结。' };
+      const l0UserMsg = { role: 'user' as const, content: `请分析以下章节正文，输出各维度的创作铁律（每项1-2句话）：\n\n${editorContent.slice(0, 5000)}` };
+      let l0FullResult = '';
+      for await (const chunk of streamAiChat({
+        configId: configs[0].id, messages: [l0SysMsg, l0UserMsg], projectId,
+      })) {
+        if (chunk.content) { l0FullResult += chunk.content; }
+        if (chunk.error) break;
+      }
+      // 按 L0 分类填入
+      if (l0FullResult.trim()) {
+        setL0Entries(prev => ({ ...prev, story_core: l0FullResult.trim() }));
+      }
+
+      // L1: 写作偏好 — 根据项目类型题材的风格要求
+      setActiveLevel('L1');
+      const l1SysMsg = { role: 'system' as const, content: '你是一名专业文学编辑，擅长总结写作风格偏好。分析章节正文，提取本章中体现的写作技巧、节奏控制、对话写作方面的特点。输出格式：每个类别一段简洁总结。' };
+      const l1UserMsg = { role: 'user' as const, content: `请分析以下章节正文，总结本章的写作风格偏好（每项1-2句话）：\n\n${editorContent.slice(0, 5000)}` };
+      let l1FullResult = '';
+      for await (const chunk of streamAiChat({
+        configId: configs[0].id, messages: [l1SysMsg, l1UserMsg], projectId,
+      })) {
+        if (chunk.content) { l1FullResult += chunk.content; }
+        if (chunk.error) break;
+      }
+      if (l1FullResult.trim()) {
+        setL1Entries(prev => ({ ...prev, writing_technique: l1FullResult.trim() }));
+      }
+
+      // L2: 经验总结 — 从写作对比中提取的创作经验
+      setActiveLevel('L2');
+      const l2SysMsg = { role: 'system' as const, content: '你是一名资深文学编辑，擅长总结创作经验。分析章节正文，提取本章的伏笔设置、悬念钩子和待回收线索。输出格式：每个类别一段简洁总结。' };
+      const l2UserMsg = { role: 'user' as const, content: `请分析以下章节正文，总结本章的经验总结、伏笔和线索（每项1-2句话）：\n\n${editorContent.slice(0, 5000)}` };
+      let l2FullResult = '';
+      for await (const chunk of streamAiChat({
+        configId: configs[0].id, messages: [l2SysMsg, l2UserMsg], projectId,
+      })) {
+        if (chunk.content) { l2FullResult += chunk.content; }
+        if (chunk.error) break;
+      }
+      if (l2FullResult.trim()) {
+        setL2Entries(prev => ({ ...prev, foreshadowing: l2FullResult.trim() }));
+      }
+
+      // L3: 数值和伏笔 — 角色状态、经验值、道具数量、任务天数、伏笔线索
       setActiveLevel('L3');
-      const l3SysMsg = { role: 'system' as const, content: '你是一名专业的小说章节分析专家。分析以下章节正文，输出 L3 章节分析报告，包括：基本信息（字数、段落数、对话密度）、剧情进展（主线推进、新角色登场、冲突密度）、写作质量评估。保持简洁。' };
-      const l3UserMsg = { role: 'user' as const, content: `请分析以下章节正文：\n\n${editorContent.slice(0, 6000)}` };
+      const l3SysMsg = { role: 'system' as const, content: '你是一名专业的数据分析员，擅长从小说章节中提取量化数据。请严格按以下格式输出：\n\n【角色状态】\n- 角色名：状态/等级/关键数值变化\n\n【道具/资源】\n- 道具名：数量/获取/消耗\n\n【任务/天数】\n- 当前任务：进度/剩余天数\n\n【伏笔线索】\n- 伏笔描述：状态（已埋/已收/待回收）' };
+      const l3UserMsg = { role: 'user' as const, content: `请从以下章节正文中提取所有数值和伏笔信息：\n\n${editorContent.slice(0, 6000)}` };
       let l3Result = '';
       for await (const chunk of streamAiChat({
-        configId: configs[0].id,
-        messages: [l3SysMsg, l3UserMsg],
-        projectId,
+        configId: configs[0].id, messages: [l3SysMsg, l3UserMsg], projectId,
       })) {
-        if (chunk.content) {
-          l3Result += chunk.content;
-          setL3Content(l3Result);
-        }
+        if (chunk.content) { l3Result += chunk.content; setL3Content(l3Result); }
         if (chunk.error) break;
       }
 
-      // 生成 L4 高级分析
+      // L4: 写作对比 — 草稿与定稿差异分析
       setActiveLevel('L4');
-      const l4SysMsg = { role: 'system' as const, content: '你是一名资深文学编辑。对以下章节进行高级分析，包括：读者体验预测（代入感、情感共鸣）、市场适配度、具体改进建议。保持简洁，可操作。' };
-      const l4UserMsg = { role: 'user' as const, content: `请对以下章节进行高级分析：\n\n${editorContent.slice(0, 6000)}` };
+      const l4SysMsg = { role: 'system' as const, content: '你是一名资深文学编辑，擅长分析章节的写作质量。请从以下维度进行分析：\n\n1. 读者体验预测（代入感、情感共鸣）\n2. 市场适配度\n3. 具体改进建议\n4. 与项目风格指南的契合度\n\n保持简洁，每项1-3句话。' };
+      const l4UserMsg = { role: 'user' as const, content: `请对以下章节正文进行高级分析：\n\n${editorContent.slice(0, 6000)}` };
       let l4Result = '';
       for await (const chunk of streamAiChat({
-        configId: configs[0].id,
-        messages: [l4SysMsg, l4UserMsg],
-        projectId,
+        configId: configs[0].id, messages: [l4SysMsg, l4UserMsg], projectId,
       })) {
-        if (chunk.content) {
-          l4Result += chunk.content;
-          setL4Content(l4Result);
-        }
+        if (chunk.content) { l4Result += chunk.content; setL4Content(l4Result); }
         if (chunk.error) break;
       }
-
-      // L0/L1/L2 保持已有内容不变（用户可自定义编辑）
-      setActiveLevel('L0');
-      setActiveLevel('L1');
-      setActiveLevel('L2');
     } catch {
-      setL3Content('章节分析失败，请重试');
-      setL4Content('高级分析失败，请重试');
+      setL3Content('分析失败，请重试');
+      setL4Content('分析失败，请重试');
     }
     setGenerating(false);
     setActiveLevel(null);
@@ -214,74 +245,107 @@ export function FinalizePanel({
 
   if (isFinalized) {
     return (
-      <div className="max-w-3xl mx-auto space-y-6">
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <div className="text-center py-6">
-            <p className="text-green-600 text-lg font-medium mb-2">已定稿</p>
-            <p className="text-sm text-gray-500 mb-1">本章已确认为最终版本</p>
-            <p className="text-xs text-gray-400">字数：{wordCount} 字 | 版本：v{currentVersionNumber || '-'}</p>
+      <div className="max-w-3xl mx-auto space-y-4">
+        {/* 已定稿状态（紧凑） */}
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-green-500" />
+              <span className="text-sm font-medium text-green-700">已定稿</span>
+              <span className="text-xs text-gray-400">v{currentVersionNumber || '-'} · {wordCount}字</span>
+            </div>
+            <button onClick={onFinalize} disabled={saveStatus === 'saving'}
+              className="text-xs text-gray-400 hover:text-gray-600 underline transition">
+              {saveStatus === 'saving' ? '保存中...' : '重新定稿'}
+            </button>
           </div>
-          <button onClick={onFinalize} disabled={saveStatus === 'saving' || !editorContent.trim()}
-            className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium transition disabled:opacity-50">
-            {saveStatus === 'saving' ? '保存中...' : '重新定稿'}
-          </button>
         </div>
 
-        {/* 总结经验 */}
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold">L0-L4 经验分析</h2>
-            {!showL0L4 ? (
+        {/* 总结经验（主区域） */}
+        <div className="bg-gradient-to-br from-gray-50 to-white rounded-xl border border-gray-200 p-8 text-center">
+          {!showL0L4 ? (
+            <>
+              <h2 className="text-lg font-semibold text-gray-900 mb-2">章节经验总结</h2>
+              <p className="text-sm text-gray-500 mb-6">
+                分析本章正文，提取 L0-L4 级别经验并保存到项目经验库
+              </p>
               <button onClick={handleGenerateL0L4} disabled={generating}
-                className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition disabled:opacity-50">
-                {generating ? '分析中...' : '总结经验'}
+                className="px-8 py-3 bg-gradient-to-r from-gray-800 to-gray-900 text-white rounded-xl text-base font-medium hover:from-gray-900 hover:to-black transition disabled:opacity-50 shadow-sm">
+                {generating ? (
+                  <span className="flex items-center gap-2 justify-center">
+                    <span className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
+                    分析中...
+                  </span>
+                ) : '总结经验'}
               </button>
-            ) : (
-              <div className="flex items-center gap-2">
+              <p className="text-xs text-gray-400 mt-4">
+                将自动分析本创作铁律、写作偏好、经验总结、数值伏笔和写作对比
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold text-gray-900">分析完成</h2>
                 <button onClick={handleSaveAnalysis} disabled={saving}
-                  className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition disabled:opacity-50">
+                  className="px-6 py-2 bg-gradient-to-r from-gray-800 to-gray-900 text-white rounded-lg text-sm font-medium hover:from-gray-900 hover:to-black transition disabled:opacity-50 shadow-sm">
                   {saving ? '保存中...' : saved ? '已保存 ✓' : '保存到经验库'}
                 </button>
               </div>
-            )}
-          </div>
-
-          {generating && (
-            <div className="flex items-center gap-2 text-sm text-gray-400 mb-4">
-              <span className="animate-spin w-4 h-4 border-2 border-gray-300 border-t-gray-900 rounded-full" />
-              <span>正在生成 {activeLevel === 'L0' ? '基础经验' : activeLevel === 'L1' ? '写作经验' : activeLevel === 'L2' ? '伏笔追踪' : activeLevel === 'L3' ? '章节分析' : '高级分析'}...</span>
-            </div>
+              {generating && (
+                <div className="flex items-center gap-2 text-sm text-gray-400 mb-4">
+                  <span className="animate-spin w-4 h-4 border-2 border-gray-300 border-t-gray-900 rounded-full" />
+                  <span>正在生成 {activeLevel === 'L0' ? '创作铁律' : activeLevel === 'L1' ? '写作偏好' : activeLevel === 'L2' ? '经验总结' : activeLevel === 'L3' ? '数值和伏笔' : '写作对比'}...</span>
+                </div>
+              )}
+            </>
           )}
 
           {showL0L4 && (
-            <div className="space-y-6">
-              {/* L3: 章节分析 */}
-              <div className="border border-gray-200 rounded-lg overflow-hidden">
-                <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-700">L3 · 章节分析</span>
-                  <span className="text-xs text-gray-400">AI 自动生成</span>
-                </div>
-                <textarea
-                  value={l3Content}
-                  onChange={e => setL3Content(e.target.value)}
-                  className="w-full h-40 p-4 text-sm font-mono bg-white resize-none focus:outline-none focus:ring-1 focus:ring-gray-400 leading-relaxed"
-                  placeholder="章节分析将在 AI 分析后生成..."
-                />
-              </div>
+            <div className="text-left space-y-4 mt-4">
+              {/* L0: 创作铁律 */}
+              <ExperienceSection title="L0 · 创作铁律" description="本项目必须做和不能做的事项">
+                {L0_CATEGORIES.map(cat => (
+                  <div key={cat.key}>
+                    <label className="block text-xs font-medium text-gray-500 mb-1 text-left">{cat.label}</label>
+                    <textarea value={l0Entries[cat.key] || ''} onChange={e => setL0Entries(prev => ({ ...prev, [cat.key]: e.target.value }))}
+                      className="w-full h-16 px-3 py-2 text-sm bg-white border border-gray-200 rounded resize-none focus:outline-none focus:ring-1 focus:ring-gray-400" placeholder={cat.placeholder} />
+                  </div>
+                ))}
+              </ExperienceSection>
 
-              {/* L4: 高级分析 */}
-              <div className="border border-gray-200 rounded-lg overflow-hidden">
-                <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-700">L4 · 高级分析</span>
-                  <span className="text-xs text-gray-400">AI 自动生成</span>
-                </div>
-                <textarea
-                  value={l4Content}
-                  onChange={e => setL4Content(e.target.value)}
-                  className="w-full h-40 p-4 text-sm font-mono bg-white resize-none focus:outline-none focus:ring-1 focus:ring-gray-400 leading-relaxed"
-                  placeholder="高级分析将在 AI 分析后生成..."
-                />
-              </div>
+              {/* L1: 写作偏好 */}
+              <ExperienceSection title="L1 · 写作偏好" description="根据项目题材的风格要求">
+                {L1_CATEGORIES.map(cat => (
+                  <div key={cat.key}>
+                    <label className="block text-xs font-medium text-gray-500 mb-1 text-left">{cat.label}</label>
+                    <textarea value={l1Entries[cat.key] || ''} onChange={e => setL1Entries(prev => ({ ...prev, [cat.key]: e.target.value }))}
+                      className="w-full h-16 px-3 py-2 text-sm bg-white border border-gray-200 rounded resize-none focus:outline-none focus:ring-1 focus:ring-gray-400" placeholder={cat.placeholder} />
+                  </div>
+                ))}
+              </ExperienceSection>
+
+              {/* L2: 经验总结 */}
+              <ExperienceSection title="L2 · 经验总结" description="从写作对比中提取的创作经验">
+                {L2_CATEGORIES.map(cat => (
+                  <div key={cat.key}>
+                    <label className="block text-xs font-medium text-gray-500 mb-1 text-left">{cat.label}</label>
+                    <textarea value={l2Entries[cat.key] || ''} onChange={e => setL2Entries(prev => ({ ...prev, [cat.key]: e.target.value }))}
+                      className="w-full h-16 px-3 py-2 text-sm bg-white border border-gray-200 rounded resize-none focus:outline-none focus:ring-1 focus:ring-gray-400" placeholder={cat.placeholder} />
+                  </div>
+                ))}
+              </ExperienceSection>
+
+              {/* L3: 数值和伏笔 */}
+              <ExperienceSection title="L3 · 数值和伏笔" description="角色状态、经验值、道具数量、任务天数、伏笔线索">
+                <textarea value={l3Content} onChange={e => setL3Content(e.target.value)}
+                  className="w-full h-40 p-4 text-sm bg-white border border-gray-200 rounded resize-none focus:outline-none focus:ring-1 focus:ring-gray-400 leading-relaxed" placeholder="AI 分析后自动生成..." />
+              </ExperienceSection>
+
+              {/* L4: 写作对比 */}
+              <ExperienceSection title="L4 · 写作对比" description="草稿与定稿差异分析（正文作者不阅读）">
+                <textarea value={l4Content} onChange={e => setL4Content(e.target.value)}
+                  className="w-full h-40 p-4 text-sm bg-white border border-gray-200 rounded resize-none focus:outline-none focus:ring-1 focus:ring-gray-400 leading-relaxed" placeholder="AI 分析后自动生成..." />
+              </ExperienceSection>
             </div>
           )}
         </div>
@@ -337,102 +401,56 @@ export function FinalizePanel({
         {generating && (
           <div className="flex items-center gap-2 text-sm text-gray-400 mb-4">
             <span className="animate-spin w-4 h-4 border-2 border-gray-300 border-t-gray-900 rounded-full" />
-            <span>正在生成 {activeLevel === 'L0' ? '基础经验' : activeLevel === 'L1' ? '写作经验' : activeLevel === 'L2' ? '伏笔追踪' : activeLevel === 'L3' ? '章节分析' : '高级分析'}...</span>
+            <span>正在生成 {activeLevel === 'L0' ? '创作铁律' : activeLevel === 'L1' ? '写作偏好' : activeLevel === 'L2' ? '经验总结' : activeLevel === 'L3' ? '数值和伏笔' : '写作对比'}...</span>
           </div>
         )}
 
         {showL0L4 && (
-          <div className="space-y-6">
-            {/* L3: 章节分析 */}
-            <div className="border border-gray-200 rounded-lg overflow-hidden">
-              <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex items-center justify-between">
-                <span className="text-sm font-medium text-gray-700">L3 · 章节分析</span>
-                <span className="text-xs text-gray-400">AI 自动生成</span>
-              </div>
-              <textarea
-                value={l3Content}
-                onChange={e => setL3Content(e.target.value)}
-                className="w-full h-40 p-4 text-sm font-mono bg-white resize-none focus:outline-none focus:ring-1 focus:ring-gray-400 leading-relaxed"
-                placeholder="章节分析将在 AI 分析后生成..."
-              />
-            </div>
+          <div className="space-y-4">
+            {/* L0: 创作铁律 */}
+            <ExperienceSection title="L0 · 创作铁律" description="本项目必须做和不能做的事项（每章创作前必读）">
+              {L0_CATEGORIES.map(cat => (
+                <div key={cat.key}>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">{cat.label}</label>
+                  <textarea value={l0Entries[cat.key] || ''} onChange={e => setL0Entries(prev => ({ ...prev, [cat.key]: e.target.value }))}
+                    className="w-full h-16 px-3 py-2 text-sm bg-white border border-gray-200 rounded resize-none focus:outline-none focus:ring-1 focus:ring-gray-400" placeholder={cat.placeholder} />
+                </div>
+              ))}
+            </ExperienceSection>
 
-            {/* L4: 高级分析 */}
-            <div className="border border-gray-200 rounded-lg overflow-hidden">
-              <div className="bg-gray-50 px-4 py-2 border-b border-gray-200 flex items-center justify-between">
-                <span className="text-sm font-medium text-gray-700">L4 · 高级分析</span>
-                <span className="text-xs text-gray-400">AI 自动生成</span>
-              </div>
-              <textarea
-                value={l4Content}
-                onChange={e => setL4Content(e.target.value)}
-                className="w-full h-32 p-4 text-sm font-mono bg-white resize-none focus:outline-none focus:ring-1 focus:ring-gray-400 leading-relaxed"
-                placeholder="高级分析将在 AI 分析后生成..."
-              />
-            </div>
+            {/* L1: 写作偏好 */}
+            <ExperienceSection title="L1 · 写作偏好" description="根据项目类型题材的风格要求（每章创作前必读）">
+              {L1_CATEGORIES.map(cat => (
+                <div key={cat.key}>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">{cat.label}</label>
+                  <textarea value={l1Entries[cat.key] || ''} onChange={e => setL1Entries(prev => ({ ...prev, [cat.key]: e.target.value }))}
+                    className="w-full h-16 px-3 py-2 text-sm bg-white border border-gray-200 rounded resize-none focus:outline-none focus:ring-1 focus:ring-gray-400" placeholder={cat.placeholder} />
+                </div>
+              ))}
+            </ExperienceSection>
 
-            {/* L0: 项目基础经验 */}
-            <div className="border border-gray-200 rounded-lg overflow-hidden">
-              <div className="bg-gray-50 px-4 py-2 border-b border-gray-200">
-                <span className="text-sm font-medium text-gray-700">L0 · 项目基础经验</span>
-                <p className="text-xs text-gray-400 mt-0.5">影响 L0→L3 升级检测和 L1 滚动更新</p>
-              </div>
-              <div className="p-4 space-y-3">
-                {L0_CATEGORIES.map(cat => (
-                  <div key={cat.key}>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">{cat.label}</label>
-                    <textarea
-                      value={l0Entries[cat.key] || ''}
-                      onChange={e => setL0Entries(prev => ({ ...prev, [cat.key]: e.target.value }))}
-                      className="w-full h-16 px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded resize-none focus:outline-none focus:ring-1 focus:ring-gray-400"
-                      placeholder={cat.placeholder}
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
+            {/* L2: 经验总结 */}
+            <ExperienceSection title="L2 · 经验总结" description="从写作对比中提取的最近创作经验（每章创作前必读）">
+              {L2_CATEGORIES.map(cat => (
+                <div key={cat.key}>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">{cat.label}</label>
+                  <textarea value={l2Entries[cat.key] || ''} onChange={e => setL2Entries(prev => ({ ...prev, [cat.key]: e.target.value }))}
+                    className="w-full h-16 px-3 py-2 text-sm bg-white border border-gray-200 rounded resize-none focus:outline-none focus:ring-1 focus:ring-gray-400" placeholder={cat.placeholder} />
+                </div>
+              ))}
+            </ExperienceSection>
 
-            {/* L1: 写作经验 */}
-            <div className="border border-gray-200 rounded-lg overflow-hidden">
-              <div className="bg-gray-50 px-4 py-2 border-b border-gray-200">
-                <span className="text-sm font-medium text-gray-700">L1 · 写作经验</span>
-                <p className="text-xs text-gray-400 mt-0.5">滚动更新，影响后续 L0→L3 升级检测</p>
-              </div>
-              <div className="p-4 space-y-3">
-                {L1_CATEGORIES.map(cat => (
-                  <div key={cat.key}>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">{cat.label}</label>
-                    <textarea
-                      value={l1Entries[cat.key] || ''}
-                      onChange={e => setL1Entries(prev => ({ ...prev, [cat.key]: e.target.value }))}
-                      className="w-full h-16 px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded resize-none focus:outline-none focus:ring-1 focus:ring-gray-400"
-                      placeholder={cat.placeholder}
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
+            {/* L3: 数值和伏笔 */}
+            <ExperienceSection title="L3 · 数值和伏笔" description="角色状态、经验值、道具数量、任务天数、伏笔线索等关键信息（每章自动更新）">
+              <textarea value={l3Content} onChange={e => setL3Content(e.target.value)}
+                className="w-full h-40 p-4 text-sm bg-white border border-gray-200 rounded resize-none focus:outline-none focus:ring-1 focus:ring-gray-400 leading-relaxed" placeholder="AI 分析后自动生成..." />
+            </ExperienceSection>
 
-            {/* L2: 伏笔跟踪 */}
-            <div className="border border-gray-200 rounded-lg overflow-hidden">
-              <div className="bg-gray-50 px-4 py-2 border-b border-gray-200">
-                <span className="text-sm font-medium text-gray-700">L2 · 伏笔跟踪</span>
-                <p className="text-xs text-gray-400 mt-0.5">伏笔回收依赖跟踪</p>
-              </div>
-              <div className="p-4 space-y-3">
-                {L2_CATEGORIES.map(cat => (
-                  <div key={cat.key}>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">{cat.label}</label>
-                    <textarea
-                      value={l2Entries[cat.key] || ''}
-                      onChange={e => setL2Entries(prev => ({ ...prev, [cat.key]: e.target.value }))}
-                      className="w-full h-16 px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded resize-none focus:outline-none focus:ring-1 focus:ring-gray-400"
-                      placeholder={cat.placeholder}
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
+            {/* L4: 写作对比 */}
+            <ExperienceSection title="L4 · 写作对比" description="草稿与定稿差异分析（正文作者不阅读）">
+              <textarea value={l4Content} onChange={e => setL4Content(e.target.value)}
+                className="w-full h-40 p-4 text-sm bg-white border border-gray-200 rounded resize-none focus:outline-none focus:ring-1 focus:ring-gray-400 leading-relaxed" placeholder="AI 分析后自动生成..." />
+            </ExperienceSection>
           </div>
         )}
       </div>
@@ -450,6 +468,19 @@ export function FinalizePanel({
           <p className="text-xs text-gray-400 mt-1">补充世界观设定</p>
         </Link>
       </div>
+    </div>
+  );
+}
+
+// ─── 经验章节子组件 ──────────────────────────────────────────
+function ExperienceSection({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
+  return (
+    <div className="border border-gray-200 rounded-lg overflow-hidden">
+      <div className="bg-gray-50 px-4 py-2 border-b border-gray-200">
+        <span className="text-sm font-medium text-gray-700">{title}</span>
+        <p className="text-xs text-gray-400 mt-0.5">{description}</p>
+      </div>
+      <div className="p-4 space-y-3">{children}</div>
     </div>
   );
 }

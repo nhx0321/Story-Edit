@@ -97,12 +97,11 @@ export function SelfCheckPanel({
 
                 <div className="px-4 py-3 space-y-2">
                   <div>
-                    <p className="text-xs text-gray-400 font-medium">修改原因</p>
+                    <p className="text-xs text-gray-400 font-medium mb-1">修改原因</p>
                     <p className="text-sm text-gray-700 mt-0.5">{item.reason}</p>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="bg-red-50 rounded p-2">
-                      <p className="text-xs text-red-400 font-medium mb-1">原文</p>
                       <p className="text-sm text-red-700">{item.original}</p>
                     </div>
                     <div className="bg-green-50 rounded p-2">

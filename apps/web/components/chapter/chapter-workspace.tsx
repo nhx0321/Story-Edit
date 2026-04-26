@@ -193,15 +193,31 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
         const cleanLine = bulletMatch ? line.slice(bulletMatch[0].length) : line;
         // 去掉 markdown 加粗标记 **
         const strippedLine = cleanLine.replace(/\*\*/g, '');
+        const trimmed = strippedLine.trim();
 
-        if (/建议/.test(strippedLine) || /修改/.test(strippedLine) || /改为/.test(strippedLine)) {
-          suggestion = strippedLine.replace(/^(建议|修改|改为)[：:]*\s*/, '');
-        } else if (/原文/.test(strippedLine) || /问题/.test(strippedLine) || /原文内容/.test(strippedLine)) {
-          original = strippedLine.replace(/^(原文|问题|原文内容)[：:]*\s*/, '');
-        } else if (/原因/.test(strippedLine)) {
-          reason = strippedLine.replace(/^原因[：:]*\s*/, '');
-        } else if (/说明|描述|分析/.test(strippedLine)) {
-          if (!reason) reason = strippedLine.replace(/^(说明|描述|分析)[：:]*\s*/, '');
+        // 跳过空行和纯标题行
+        if (!trimmed) continue;
+        if (/^(---|___|\*\*\*)$/.test(trimmed)) continue;
+
+        if (/^建议[：:]\s*/.test(trimmed) || /^修改[：:]\s*/.test(trimmed) || /^改为[：:]\s*/.test(trimmed)) {
+          suggestion = trimmed.replace(/^(建议|修改|改为)[：:]*\s*/, '');
+        } else if (/^原文[：:]\s*/.test(trimmed) || /^问题[：:]\s*/.test(trimmed) || /^原文内容[：:]\s*/.test(trimmed)) {
+          original = trimmed.replace(/^(原文|问题|原文内容)[：:]*\s*/, '');
+        } else if (/^原因[：:]\s*/.test(trimmed)) {
+          reason = trimmed.replace(/^原因[：:]*\s*/, '');
+        } else if (/^说明[：:]\s*/.test(trimmed) || /^描述[：:]\s*/.test(trimmed) || /^分析[：:]\s*/.test(trimmed)) {
+          if (!reason) reason = trimmed.replace(/^(说明|描述|分析)[：:]*\s*/, '');
+        } else {
+          // 非标题行：追加到当前正在收集的字段
+          if (suggestion && !original && !reason) {
+            suggestion += '\n' + trimmed;
+          } else if (reason && !original && !suggestion) {
+            reason += '\n' + trimmed;
+          } else if (original && !suggestion) {
+            original += '\n' + trimmed;
+          } else if (suggestion) {
+            suggestion += '\n' + trimmed;
+          }
         }
       }
 
@@ -287,14 +303,14 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
     setModifiedContent(highlightedHtml);
     setModifyHighlightTexts(modifiedTexts);
 
-    // Remove highlights after 2 seconds (仅影响 modifiedContent 的高亮)
+    // Remove highlights after 5 seconds (提示修改位置)
     setTimeout(() => {
       setModifiedContent(prev => {
         const cleaned = prev.replace(/<span class="mod-highlight">(.*?)<\/span>/g, '$1');
         return cleaned;
       });
       setModifyHighlightTexts([]);
-    }, 1000);
+    }, 5000);
   }, []);
 
   const handleNavigateToModify = useCallback(() => {
@@ -322,17 +338,17 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
     <div className="min-h-screen bg-white flex">
       {/* 修改高亮动画 CSS */}
       <style>{`
-        @keyframes modFadePulse {
-          0% { color: #16a34a; font-weight: 700; opacity: 1; }
-          25% { color: #22c55e; font-weight: 700; opacity: 0.7; }
-          50% { color: #16a34a; font-weight: 700; opacity: 1; }
-          75% { color: #22c55e; font-weight: 700; opacity: 0.7; }
-          100% { color: inherit; font-weight: inherit; opacity: 1; }
+        @keyframes modHighlightPulse {
+          0% { background-color: #bbf7d0; color: #166534; }
+          25% { background-color: #86efad; color: #166534; }
+          50% { background-color: #bbf7d0; color: #166534; }
+          75% { background-color: #86efad; color: #166534; }
+          100% { background-color: transparent; color: inherit; }
         }
         .mod-highlight {
-          animation: modFadePulse 1s ease-in-out;
-          border-radius: 2px;
-          padding: 0 1px;
+          animation: modHighlightPulse 3s ease-in-out;
+          border-radius: 3px;
+          padding: 1px 2px;
         }
       `}</style>
       <ProjectSidebar
