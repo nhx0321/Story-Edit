@@ -107,10 +107,10 @@ export function FinalizePanel({
     setShowL0L4(true);
 
     try {
-      // L0: 创作铁律 — 本项目必须做和不能做的事项
+      // ─── L0: 创作铁律 — 本项目必须做和不能做的事项（每章创作前必读） ───
       setActiveLevel('L0');
-      const l0SysMsg = { role: 'system' as const, content: '你是一名资深文学编辑，擅长总结项目创作铁律。分析章节正文，提取出本项目必须遵守和必须避免的创作规则。输出格式：每个类别输出一段简洁的总结。' };
-      const l0UserMsg = { role: 'user' as const, content: `请分析以下章节正文，输出各维度的创作铁律（每项1-2句话）：\n\n${editorContent.slice(0, 5000)}` };
+      const l0SysMsg = { role: 'system' as const, content: '你是一名资深文学编辑，严格按以下四类输出本章的创作铁律。每个类别用【】标题开头，内容1-2句话。\n\n【故事核心要素】故事类型、核心冲突、主线走向的必须/禁止规则\n【世界规则】世界观核心规则、力量体系基础的必须/禁止规则\n【角色成长弧】主角核心成长线、关键转折的必须/禁止规则\n【风格指南】写作风格、节奏特点的必须/禁止规则' };
+      const l0UserMsg = { role: 'user' as const, content: `分析以下章节正文，按四类输出创作铁律：\n\n${editorContent.slice(0, 5000)}` };
       let l0FullResult = '';
       for await (const chunk of streamAiChat({
         configId: configs[0].id, messages: [l0SysMsg, l0UserMsg], projectId,
@@ -118,15 +118,17 @@ export function FinalizePanel({
         if (chunk.content) { l0FullResult += chunk.content; }
         if (chunk.error) break;
       }
-      // 按 L0 分类填入
-      if (l0FullResult.trim()) {
-        setL0Entries(prev => ({ ...prev, story_core: l0FullResult.trim() }));
+      // 解析 L0 四类内容
+      const l0CatMap: Record<string, string> = { story_core: '故事核心要素', world_rules: '世界规则', character_arc: '角色成长弧', style_guide: '风格指南' };
+      for (const [key, label] of Object.entries(l0CatMap)) {
+        const match = l0FullResult.match(new RegExp(`【${label}】[\\s\\n]*([^【]*)`));
+        if (match?.[1]?.trim()) setL0Entries(prev => ({ ...prev, [key]: match[1].trim() }));
       }
 
-      // L1: 写作偏好 — 根据项目类型题材的风格要求
+      // ─── L1: 写作偏好 — 根据项目类型题材的风格要求（每章创作前必读） ───
       setActiveLevel('L1');
-      const l1SysMsg = { role: 'system' as const, content: '你是一名专业文学编辑，擅长总结写作风格偏好。分析章节正文，提取本章中体现的写作技巧、节奏控制、对话写作方面的特点。输出格式：每个类别一段简洁总结。' };
-      const l1UserMsg = { role: 'user' as const, content: `请分析以下章节正文，总结本章的写作风格偏好（每项1-2句话）：\n\n${editorContent.slice(0, 5000)}` };
+      const l1SysMsg = { role: 'system' as const, content: '你是一名专业文学编辑，严格按以下三类输出本章的写作偏好。每个类别用【】标题开头，内容1-2句话。\n\n【写作技巧】本章使用的写作技巧和手法\n【节奏经验】本章节奏控制的经验\n【对话心得】对话写作的心得体会' };
+      const l1UserMsg = { role: 'user' as const, content: `分析以下章节正文，按三类输出写作偏好：\n\n${editorContent.slice(0, 5000)}` };
       let l1FullResult = '';
       for await (const chunk of streamAiChat({
         configId: configs[0].id, messages: [l1SysMsg, l1UserMsg], projectId,
@@ -134,14 +136,17 @@ export function FinalizePanel({
         if (chunk.content) { l1FullResult += chunk.content; }
         if (chunk.error) break;
       }
-      if (l1FullResult.trim()) {
-        setL1Entries(prev => ({ ...prev, writing_technique: l1FullResult.trim() }));
+      // 解析 L1 三类内容
+      const l1CatMap: Record<string, string> = { writing_technique: '写作技巧', pacing_experience: '节奏经验', dialogue_tips: '对话心得' };
+      for (const [key, label] of Object.entries(l1CatMap)) {
+        const match = l1FullResult.match(new RegExp(`【${label}】[\\s\\n]*([^【]*)`));
+        if (match?.[1]?.trim()) setL1Entries(prev => ({ ...prev, [key]: match[1].trim() }));
       }
 
-      // L2: 经验总结 — 从写作对比中提取的创作经验
+      // ─── L2: 经验总结 — 从写作对比中提取的最近创作经验（每章创作前必读） ───
       setActiveLevel('L2');
-      const l2SysMsg = { role: 'system' as const, content: '你是一名资深文学编辑，擅长总结创作经验。分析章节正文，提取本章的伏笔设置、悬念钩子和待回收线索。输出格式：每个类别一段简洁总结。' };
-      const l2UserMsg = { role: 'user' as const, content: `请分析以下章节正文，总结本章的经验总结、伏笔和线索（每项1-2句话）：\n\n${editorContent.slice(0, 5000)}` };
+      const l2SysMsg = { role: 'system' as const, content: '你是一名资深文学编辑，严格按以下三类输出本章的经验总结。每个类别用【】标题开头，内容1-2句话。\n\n【伏笔设置】本章设置的伏笔\n【悬念钩子】本章结尾的悬念钩子\n【待回收线索】需要后续章节回收的线索' };
+      const l2UserMsg = { role: 'user' as const, content: `分析以下章节正文，按三类输出经验总结：\n\n${editorContent.slice(0, 5000)}` };
       let l2FullResult = '';
       for await (const chunk of streamAiChat({
         configId: configs[0].id, messages: [l2SysMsg, l2UserMsg], projectId,
@@ -149,14 +154,17 @@ export function FinalizePanel({
         if (chunk.content) { l2FullResult += chunk.content; }
         if (chunk.error) break;
       }
-      if (l2FullResult.trim()) {
-        setL2Entries(prev => ({ ...prev, foreshadowing: l2FullResult.trim() }));
+      // 解析 L2 三类内容
+      const l2CatMap: Record<string, string> = { foreshadowing: '伏笔设置', cliffhanger: '悬念钩子', pending_threads: '待回收线索' };
+      for (const [key, label] of Object.entries(l2CatMap)) {
+        const match = l2FullResult.match(new RegExp(`【${label}】[\\s\\n]*([^【]*)`));
+        if (match?.[1]?.trim()) setL2Entries(prev => ({ ...prev, [key]: match[1].trim() }));
       }
 
-      // L3: 数值和伏笔 — 角色状态、经验值、道具数量、任务天数、伏笔线索
+      // ─── L3: 数值和伏笔 — 角色状态、经验值、道具数量、任务天数、伏笔线索等关键信息（每章自动更新） ───
       setActiveLevel('L3');
-      const l3SysMsg = { role: 'system' as const, content: '你是一名专业的数据分析员，擅长从小说章节中提取量化数据。请严格按以下格式输出：\n\n【角色状态】\n- 角色名：状态/等级/关键数值变化\n\n【道具/资源】\n- 道具名：数量/获取/消耗\n\n【任务/天数】\n- 当前任务：进度/剩余天数\n\n【伏笔线索】\n- 伏笔描述：状态（已埋/已收/待回收）' };
-      const l3UserMsg = { role: 'user' as const, content: `请从以下章节正文中提取所有数值和伏笔信息：\n\n${editorContent.slice(0, 6000)}` };
+      const l3SysMsg = { role: 'system' as const, content: '你是一名专业数据提取员，从小说章节中提取可量化的数值信息和伏笔线索。严格按以下格式输出，不存在则写"无"：\n\n【角色状态】\n角色名：当前状态/等级/关键数值变化\n\n【道具/资源】\n道具名：数量变化/获取来源/消耗去向\n\n【任务/天数】\n当前任务：进度/剩余天数/完成状态\n\n【伏笔线索】\n伏笔描述：当前状态（已埋/已收/待回收）' };
+      const l3UserMsg = { role: 'user' as const, content: `从以下章节正文中提取所有数值和伏笔信息：\n\n${editorContent.slice(0, 6000)}` };
       let l3Result = '';
       for await (const chunk of streamAiChat({
         configId: configs[0].id, messages: [l3SysMsg, l3UserMsg], projectId,
@@ -165,10 +173,10 @@ export function FinalizePanel({
         if (chunk.error) break;
       }
 
-      // L4: 写作对比 — 草稿与定稿差异分析
+      // ─── L4: 写作对比 — 草稿与定稿差异分析（正文作者不阅读） ───
       setActiveLevel('L4');
-      const l4SysMsg = { role: 'system' as const, content: '你是一名资深文学编辑，擅长分析章节的写作质量。请从以下维度进行分析：\n\n1. 读者体验预测（代入感、情感共鸣）\n2. 市场适配度\n3. 具体改进建议\n4. 与项目风格指南的契合度\n\n保持简洁，每项1-3句话。' };
-      const l4UserMsg = { role: 'user' as const, content: `请对以下章节正文进行高级分析：\n\n${editorContent.slice(0, 6000)}` };
+      const l4SysMsg = { role: 'system' as const, content: '你是一名资深文学编辑，对以下已定稿的章节进行写作质量分析。请从以下维度输出（每项1-3句话）：\n\n1.【读者体验】代入感、情感共鸣\n2.【市场适配】类型契合度、读者定位\n3.【改进建议】可操作的具体优化方向\n4.【风格一致】与项目风格指南的契合度' };
+      const l4UserMsg = { role: 'user' as const, content: `对以下已定稿章节进行写作对比分析：\n\n${editorContent.slice(0, 6000)}` };
       let l4Result = '';
       for await (const chunk of streamAiChat({
         configId: configs[0].id, messages: [l4SysMsg, l4UserMsg], projectId,
