@@ -27,6 +27,7 @@ interface FinalizePanelProps {
   editorContent: string;
   onFinalize: () => Promise<void>;
   saveStatus: string;
+  autoGenerate?: boolean;
 }
 
 const L0_CATEGORIES = [
@@ -51,7 +52,7 @@ const L2_CATEGORIES = [
 export function FinalizePanel({
   chapterId, projectId, chapterTitle, wordCount,
   isFinalized, currentVersionNumber, editorContent,
-  onFinalize, saveStatus,
+  onFinalize, saveStatus, autoGenerate,
 }: FinalizePanelProps) {
   const utils = trpc.useUtils();
   const { data: existingLevels } = trpc.memory.list.useQuery(
@@ -97,6 +98,106 @@ export function FinalizePanel({
       }
     }
   }, [existingLevels]);
+
+  // Auto-generate: when autoGenerate is triggered, run L0-L4 analysis then auto-save
+  useEffect(() => {
+    if (!autoGenerate || !configs || configs.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      setShowL0L4(false);
+      setGenerating(true);
+      let l3Result = '';
+      let l4Result = '';
+      try {
+        // 1. 生成 L3
+        setActiveLevel('L3');
+        const l3SysMsg = { role: 'system' as const, content: '你是一名专业的小说章节分析专家。分析以下章节正文，输出 L3 章节分析报告，包括：基本信息（字数、段落数、对话密度）、剧情进展（主线推进、新角色登场、冲突密度）、写作质量评估。保持简洁。' };
+        const l3UserMsg = { role: 'user' as const, content: `请分析以下章节正文：\n\n${editorContent.slice(0, 6000)}` };
+        for await (const chunk of streamAiChat({
+          configId: configs[0].id,
+          messages: [l3SysMsg, l3UserMsg],
+          projectId,
+        })) {
+          if (cancelled) return;
+          if (chunk.content) { l3Result += chunk.content; setL3Content(l3Result); }
+          if (chunk.error) break;
+        }
+
+        // 2. 生成 L4
+        setActiveLevel('L4');
+        const l4SysMsg = { role: 'system' as const, content: '你是一名资深文学编辑。对以下章节进行高级分析，包括：读者体验预测（代入感、情感共鸣）、市场适配度、具体改进建议。保持简洁，可操作。' };
+        const l4UserMsg = { role: 'user' as const, content: `请对以下章节进行高级分析：\n\n${editorContent.slice(0, 6000)}` };
+        for await (const chunk of streamAiChat({
+          configId: configs[0].id,
+          messages: [l4SysMsg, l4UserMsg],
+          projectId,
+        })) {
+          if (cancelled) return;
+          if (chunk.content) { l4Result += chunk.content; setL4Content(l4Result); }
+          if (chunk.error) break;
+        }
+      } catch {
+        if (!cancelled) {
+          setL3Content('章节分析失败，请重试');
+          setL4Content('高级分析失败，请重试');
+        }
+      }
+      if (cancelled) return;
+      setShowL0L4(true);
+      setGenerating(false);
+      setActiveLevel(null);
+
+      // 3. 等待现有经验数据加载完成，然后自动保存到经验库
+      for (let i = 0; i < 50; i++) {
+        if (cancelled) return;
+        if (existingLevels !== undefined) break;
+        await new Promise(r => setTimeout(r, 100));
+      }
+      if (cancelled) return;
+      setSaving(true);
+      try {
+        // Build entries from existingLevels data + newly generated L3/L4
+        const existingEntries: Record<string, { level: string; category?: string; content: string }> = {};
+        if (existingLevels) {
+          for (const entry of existingLevels) {
+            const key = entry.category ? `${entry.level}:${entry.category}` : entry.level;
+            existingEntries[key] = { level: entry.level, category: entry.category || undefined, content: entry.content };
+          }
+        }
+        // Also include any user edits (state might have updates over existingLevels)
+        for (const [category, content] of Object.entries(l0Entries)) {
+          if (content.trim()) existingEntries[`L0:${category}`] = { level: 'L0', category, content };
+        }
+        for (const [category, content] of Object.entries(l1Entries)) {
+          if (content.trim()) existingEntries[`L1:${category}`] = { level: 'L1', category, content };
+        }
+        for (const [category, content] of Object.entries(l2Entries)) {
+          if (content.trim()) existingEntries[`L2:${category}`] = { level: 'L2', category, content };
+        }
+
+        const entries = Object.values(existingEntries);
+        if (l3Result?.trim()) entries.push({ level: 'L3', content: l3Result });
+        if (l4Result?.trim()) entries.push({ level: 'L4', content: l4Result });
+
+        for (const entry of entries) {
+          await utils.client.memory.upsert.mutate({
+            projectId,
+            level: entry.level as 'L0' | 'L1' | 'L2' | 'L3' | 'L4',
+            category: entry.category,
+            content: entry.content,
+            sourceChapterId: chapterId,
+          });
+        }
+        setSaved(true);
+        utils.memory.list.invalidate({ projectId });
+        window.dispatchEvent(new CustomEvent('workflow-step-completed'));
+      } catch {
+        alert('自动保存经验失败');
+      }
+      setSaving(false);
+    })();
+    return () => { cancelled = true; };
+  }, [autoGenerate, configs, editorContent, projectId, chapterId, utils, existingLevels, l0Entries, l1Entries, l2Entries]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleGenerateL0L4 = async () => {
     if (!configs || configs.length === 0) {
@@ -187,9 +288,9 @@ export function FinalizePanel({
         entries.push({ level: 'L4', content: l4Content });
       }
 
-      // Save each entry individually using memory.add
+      // Save each entry individually using memory.upsert (merge if same category)
       for (const entry of entries) {
-        await utils.client.memory.add.mutate({
+        await utils.client.memory.upsert.mutate({
           projectId,
           level: entry.level as 'L0' | 'L1' | 'L2' | 'L3' | 'L4',
           category: entry.category,
@@ -214,12 +315,17 @@ export function FinalizePanel({
 
   if (isFinalized) {
     return (
-      <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <div className="text-center py-8">
-          <p className="text-green-600 text-lg font-medium mb-2">已定稿</p>
-          <p className="text-sm text-gray-500">本章已确认为最终版本</p>
-          <p className="text-xs text-gray-400 mt-2">字数：{wordCount} 字</p>
-          <p className="text-xs text-gray-400">版本：v{currentVersionNumber || '-'}</p>
+      <div className="max-w-3xl mx-auto">
+        <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <div className="text-center py-6">
+            <p className="text-green-600 text-lg font-medium mb-2">已定稿</p>
+            <p className="text-sm text-gray-500 mb-1">本章已确认为最终版本</p>
+            <p className="text-xs text-gray-400">字数：{wordCount} 字 | 版本：v{currentVersionNumber || '-'}</p>
+          </div>
+          <button onClick={onFinalize} disabled={saveStatus === 'saving' || !editorContent.trim()}
+            className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium transition disabled:opacity-50">
+            {saveStatus === 'saving' ? '保存中...' : '重新定稿'}
+          </button>
         </div>
       </div>
     );

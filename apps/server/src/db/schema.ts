@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, varchar, boolean, integer, jsonb, pgEnum, uuid, decimal } from 'drizzle-orm/pg-core';
+import { pgTable, text, timestamp, varchar, boolean, integer, jsonb, pgEnum, uuid, decimal, bigint } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
 // ========== 枚举 ==========
@@ -109,6 +109,7 @@ export const projects = pgTable('projects', {
   style: varchar('style', { length: 100 }),
   methodology: varchar('methodology', { length: 100 }),
   config: jsonb('config').$type<Record<string, unknown>>(),
+  writingStyle: jsonb('writing_style').$type<Record<string, string>>().default({}),
   status: varchar('status', { length: 20 }).default('active'),
   deletedAt: timestamp('deleted_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -180,6 +181,20 @@ export const outlineVersions = pgTable('outline_versions', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
+// 修改日志表（记录所有 AI 修改的变更历史）
+export const editLogs = pgTable('edit_logs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  projectId: uuid('project_id').notNull().references(() => projects.id),
+  entityType: varchar('entity_type', { length: 20 }).notNull(), // volume | unit | chapter | setting
+  entityId: uuid('entity_id').notNull(),
+  fieldName: varchar('field_name', { length: 50 }).notNull(), // synopsis | content | title
+  oldValue: text('old_value'),
+  newValue: text('new_value'),
+  editReason: text('edit_reason'),
+  aiRole: varchar('ai_role', { length: 50 }), // editor | setting_editor
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
 // ========== 故事脉络 ==========
 
 export const storyNarratives = pgTable('story_narratives', {
@@ -217,6 +232,17 @@ export const settingRelationships = pgTable('setting_relationships', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
+// 设定交付（设定编辑完成全部设定后，生成结构化交付文档）
+export const settingsDeliveries = pgTable('settings_deliveries', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  projectId: uuid('project_id').notNull().references(() => projects.id),
+  title: text('title').notNull(),
+  content: jsonb('content').$type<Record<string, unknown>>().notNull(),
+  conversationId: uuid('conversation_id').references(() => conversations.id),
+  createdBy: uuid('created_by').references(() => users.id),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
 // ========== AI 角色 ==========
 
 export const aiRoles = pgTable('ai_roles', {
@@ -237,6 +263,7 @@ export const memoryEntries = pgTable('memory_entries', {
   level: memoryLevelEnum('level').notNull(),
   category: varchar('category', { length: 100 }),
   content: text('content').notNull(),
+  updateCount: integer('update_count').notNull().default(1),
   sourceChapterId: uuid('source_chapter_id').references(() => chapters.id),
   isActive: boolean('is_active').default(true),
   createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -320,6 +347,7 @@ export const conversations = pgTable('conversations', {
   targetEntityType: varchar('target_entity_type', { length: 50 }),
   roleKey: varchar('role_key', { length: 50 }).notNull(),
   workflowStepId: varchar('workflow_step_id', { length: 50 }),
+  modelId: varchar('model_id', { length: 100 }),
   status: varchar('status', { length: 20 }).default('active'),
   metadata: jsonb('metadata').$type<Record<string, unknown>>(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -353,6 +381,7 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   aiRoles: many(aiRoles),
   memoryEntries: many(memoryEntries),
   storyNarratives: many(storyNarratives),
+  editLogs: many(editLogs),
 }));
 
 export const volumesRelations = relations(volumes, ({ one, many }) => ({
@@ -690,6 +719,131 @@ export const rechargeOrders = pgTable('recharge_orders', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
+// ========== Token 中转站系统 ==========
+
+export const apiChannels = pgTable('api_channels', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  provider: varchar('provider', { length: 50 }).notNull(),
+  name: varchar('name', { length: 100 }),
+  apiKeyEncrypted: text('api_key_encrypted').notNull(),
+  baseUrl: varchar('base_url', { length: 500 }),
+  priority: integer('priority').default(0),
+  maxConcurrency: integer('max_concurrency').default(10),
+  weight: integer('weight').default(1),
+  status: varchar('status', { length: 20 }).default('active'),
+  dailyLimit: bigint('daily_limit', { mode: 'number' }).default(5000000),
+  dailyUsed: bigint('daily_used', { mode: 'number' }).default(0),
+  dailyResetAt: timestamp('daily_reset_at'),
+  userTier: varchar('user_tier', { length: 20 }).default('all'),
+  lastErrorAt: timestamp('last_error_at'),
+  lastErrorMessage: text('last_error_message'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const modelPricing = pgTable('model_pricing', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  provider: varchar('provider', { length: 50 }).notNull(),
+  modelId: varchar('model_id', { length: 100 }).notNull(),
+  modelName: varchar('model_name', { length: 200 }).notNull(),
+  groupName: varchar('group_name', { length: 50 }).default('default'),
+  inputPricePer1m: bigint('input_price_per_1m', { mode: 'number' }).notNull(),
+  outputPricePer1m: bigint('output_price_per_1m', { mode: 'number' }).notNull(),
+  currency: varchar('currency', { length: 10 }).default('CNY'),
+  isActive: boolean('is_active').default(true),
+  sortOrder: integer('sort_order').default(0),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const userTokenAccounts = pgTable('user_token_accounts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id).unique(),
+  balance: bigint('balance', { mode: 'number' }).default(0),
+  totalConsumed: bigint('total_consumed', { mode: 'number' }).default(0),
+  totalRecharged: bigint('total_recharged', { mode: 'number' }).default(0),
+  alertThreshold: bigint('alert_threshold', { mode: 'number' }),
+  alertEnabled: boolean('alert_enabled').default(false),
+  preferredModel: varchar('preferred_model', { length: 100 }),
+  dailyLimit: bigint('daily_limit', { mode: 'number' }).default(10000),
+  dailyUsed: bigint('daily_used', { mode: 'number' }).default(0),
+  dailyResetAt: timestamp('daily_reset_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const tokenConsumptionLogs = pgTable('token_consumption_logs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id),
+  source: varchar('source', { length: 20 }).notNull(),
+  apiKeyId: uuid('api_key_id'),
+  provider: varchar('provider', { length: 50 }).notNull(),
+  modelId: varchar('model_id', { length: 100 }).notNull(),
+  requestType: varchar('request_type', { length: 50 }),
+  inputTokens: bigint('input_tokens', { mode: 'number' }).default(0),
+  outputTokens: bigint('output_tokens', { mode: 'number' }).default(0),
+  cacheHitTokens: bigint('cache_hit_tokens', { mode: 'number' }).default(0),
+  cost: bigint('cost', { mode: 'number' }).notNull(),
+  requestId: varchar('request_id', { length: 200 }),
+  projectId: uuid('project_id'),
+  conversationId: uuid('conversation_id'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const userApiKeys = pgTable('user_api_keys', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id),
+  name: varchar('name', { length: 100 }).notNull(),
+  keyHash: varchar('key_hash', { length: 64 }).notNull().unique(),
+  keyPrefix: varchar('key_prefix', { length: 12 }).notNull(),
+  status: varchar('status', { length: 20 }).default('active'),
+  lastUsedAt: timestamp('last_used_at'),
+  expiresAt: timestamp('expires_at'),
+  ipWhitelist: text('ip_whitelist').array(),
+  rateLimitPerMin: integer('rate_limit_per_min').default(60),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const userSubscriptions = pgTable('user_subscriptions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id),
+  packageId: uuid('package_id'),
+  status: varchar('status', { length: 20 }).notNull(),
+  startedAt: timestamp('started_at').notNull(),
+  expiresAt: timestamp('expires_at'),
+  tokenQuotaTotal: bigint('token_quota_total', { mode: 'number' }).notNull(),
+  tokenQuotaUsed: bigint('token_quota_used', { mode: 'number' }).default(0),
+  autoRenew: boolean('auto_renew').default(false),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const tokenRechargeOrders = pgTable('token_recharge_orders', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id),
+  packageId: uuid('package_id'),
+  amountCents: integer('amount_cents').notNull(),
+  tokenAmount: bigint('token_amount', { mode: 'number' }).notNull(),
+  paymentMethod: varchar('payment_method', { length: 30 }),
+  paymentTradeNo: varchar('payment_trade_no', { length: 100 }),
+  status: varchar('status', { length: 20 }).default('pending'),
+  paidAt: timestamp('paid_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const tokenPackages = pgTable('token_packages', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 100 }).notNull(),
+  type: varchar('type', { length: 20 }).notNull(),
+  priceCents: integer('price_cents').notNull(),
+  durationDays: integer('duration_days'),
+  tokenQuota: bigint('token_quota', { mode: 'number' }).notNull(),
+  modelGroup: varchar('model_group', { length: 50 }).notNull(),
+  features: jsonb('features').$type<Record<string, unknown>>().default({}),
+  isActive: boolean('is_active').default(true),
+  firstPurchasePrice: integer('first_purchase_price'),
+  sortOrder: integer('sort_order').default(0),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
 // ========== 管理员操作日志 ==========
 
 export const adminAuditLogs = pgTable('admin_audit_logs', {
@@ -792,4 +946,54 @@ export const spriteTextEntriesRelations = relations(spriteTextEntries, ({ one })
 
 export const spriteAITasksRelations = relations(spriteAITasks, ({ one }) => ({
   entry: one(spriteTextEntries, { fields: [spriteAITasks.entryId], references: [spriteTextEntries.id] }),
+}));
+
+// ========== 用户反馈 ==========
+
+export const feedbackStatusEnum = pgEnum('feedback_status', ['pending', 'processing', 'resolved', 'closed']);
+
+export const feedbacks = pgTable('feedbacks', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id),
+  type: varchar('type', { length: 20 }).notNull().default('feedback'), // feedback / bug / suggestion
+  title: varchar('title', { length: 200 }).notNull(),
+  content: text('content').notNull(),
+  screenshot: text('screenshot'), // base64 或 URL
+  status: feedbackStatusEnum('status').notNull().default('pending'),
+  adminReply: text('admin_reply'),
+  repliedAt: timestamp('replied_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+// ========== 站内信 ==========
+
+export const notifications = pgTable('notifications', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id),
+  title: varchar('title', { length: 200 }).notNull(),
+  content: text('content').notNull(),
+  isRead: boolean('is_read').notNull().default(false),
+  feedbackId: uuid('feedback_id').references(() => feedbacks.id),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+// ========== 密码重置令牌 ==========
+
+export const passwordResetTokens = pgTable('password_reset_tokens', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull().references(() => users.id),
+  token: varchar('token', { length: 64 }).notNull().unique(),
+  expiresAt: timestamp('expires_at').notNull(),
+  usedAt: timestamp('used_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const feedbacksRelations = relations(feedbacks, ({ one }) => ({
+  user: one(users, { fields: [feedbacks.userId], references: [users.id] }),
+}));
+
+export const notificationsRelations = relations(notifications, ({ one }) => ({
+  user: one(users, { fields: [notifications.userId], references: [users.id] }),
+  feedback: one(feedbacks, { fields: [notifications.feedbackId], references: [feedbacks.id] }),
 }));

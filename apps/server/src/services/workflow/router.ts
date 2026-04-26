@@ -326,10 +326,10 @@ export const workflowRouter = router({
         experienceSummary += '### 写作偏好\n' + expByLevel.L1.slice(0, 3).map((c, i) => `${i + 1}. ${c}`).join('\n') + '\n\n';
       }
       if (expByLevel.L2.length > 0) {
-        experienceSummary += '### 关键数值\n' + expByLevel.L2.slice(0, 3).map((c, i) => `${i + 1}. ${c}`).join('\n') + '\n\n';
+        experienceSummary += '### 经验总结\n' + expByLevel.L2.slice(0, 3).map((c, i) => `${i + 1}. ${c}`).join('\n') + '\n\n';
       }
       if (expByLevel.L3.length > 0) {
-        experienceSummary += '### 近期经验\n' + expByLevel.L3.slice(0, 2).map((c, i) => `${i + 1}. ${c}`).join('\n') + '\n\n';
+        experienceSummary += '### 数值和伏笔\n' + expByLevel.L3.slice(0, 2).map((c, i) => `${i + 1}. ${c}`).join('\n') + '\n\n';
       }
 
       const brief = `# 创作任务书
@@ -675,7 +675,7 @@ ${chList.map(c => `- ${c.title}：${c.synopsis || '（无梗概）'}`).join('\n'
       return db.select()
         .from(memoryEntries)
         .where(and(...where))
-        .orderBy(desc(memoryEntries.createdAt));
+        .orderBy(asc(memoryEntries.level), asc(memoryEntries.createdAt));
     }),
 
   // 手动创建经验条目
@@ -951,8 +951,8 @@ ${chList.map(c => `- ${c.title}：${c.synopsis || '（无梗概）'}`).join('\n'
       const levelLabels: Record<string, string> = {
         L0: '创作铁律（必须遵守）',
         L1: '写作偏好',
-        L2: '关键数值（角色状态/道具/数值等）',
-        L3: '近期经验',
+        L2: '经验总结',
+        L3: '数值和伏笔',
       };
 
       let formattedText = '';

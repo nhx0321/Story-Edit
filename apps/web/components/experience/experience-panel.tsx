@@ -18,8 +18,8 @@ const LEVEL_COLORS: Record<string, string> = {
 const LEVEL_DESCRIPTIONS: Record<string, string> = {
   L0: '创作铁律 · 本项目必须做和不能做的事项（每章创作前必读）',
   L1: '写作偏好 · 根据项目类型题材的风格要求（每章创作前必读）',
-  L2: '关键数值 · 角色状态、经验值、道具数量、任务天数等关键信息（每章自动更新）',
-  L3: '经验总结 · 从写作对比中提取的最近创作经验（每章创作前必读）',
+  L2: '经验总结 · 从写作对比中提取的最近创作经验（每章创作前必读）',
+  L3: '数值和伏笔 · 角色状态、经验值、道具数量、任务天数、伏笔线索等关键信息（每章自动更新）',
   L4: '写作对比 · 草稿与定稿差异分析（正文作者不阅读）',
 };
 
@@ -27,8 +27,8 @@ const TABS: { key: LevelFilter; label: string; description: string }[] = [
   { key: 'all', label: '全部', description: '显示所有等级经验' },
   { key: 'L0', label: 'L0 创作铁律', description: '核心铁律 — 每章创作前必读，必做/必不做的硬性要求' },
   { key: 'L1', label: 'L1 写作偏好', description: '项目特色 — 风格特色要求，AI 创作时贯彻执行' },
-  { key: 'L3', label: 'L3 经验总结', description: '近期经验 — 从写作对比中提取的创作经验参考' },
-  { key: 'L2', label: 'L2 关键数值', description: '关键数值 — 角色状态、经验值、道具数量、任务天数等（每章自动更新）' },
+  { key: 'L2', label: 'L2 经验总结', description: '经验总结 — 从写作对比中提取的创作经验参考（L0→L3升级淘汰）' },
+  { key: 'L3', label: 'L3 数值和伏笔', description: '数值和伏笔 — 角色状态、经验值、道具数量、任务天数等关键信息（每章自动更新）' },
   { key: 'L4', label: 'L4 写作对比', description: '草稿 vs 定稿差异分析 — 正文作者不阅读，仅供后台分析' },
 ];
 

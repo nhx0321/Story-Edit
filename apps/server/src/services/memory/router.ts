@@ -27,7 +27,7 @@ export const memoryRouter = router({
       const conditions = [eq(memoryEntries.projectId, input.projectId)];
       if (input.level) conditions.push(eq(memoryEntries.level, input.level));
       if (input.activeOnly) conditions.push(eq(memoryEntries.isActive, true));
-      return db.select().from(memoryEntries).where(and(...conditions)).orderBy(desc(memoryEntries.updatedAt));
+      return db.select().from(memoryEntries).where(and(...conditions)).orderBy(asc(memoryEntries.level), asc(memoryEntries.createdAt));
     }),
 
   // 添加记忆条目
@@ -43,6 +43,56 @@ export const memoryRouter = router({
       await verifyProjectOwner(input.projectId, ctx.userId);
       const [entry] = await db.insert(memoryEntries).values(input).returning();
       return entry;
+    }),
+
+  // 合并或新增记忆条目（同 level+category 合并，自动计数晋升 L0）
+  upsert: protectedProcedure
+    .input(z.object({
+      projectId: z.string().uuid(),
+      level: z.enum(['L0', 'L1', 'L2', 'L3', 'L4']),
+      category: z.string().optional(),
+      content: z.string(),
+      sourceChapterId: z.string().uuid().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await verifyProjectOwner(input.projectId, ctx.userId);
+
+      // 查询同 level+category 的现有记录
+      const conditions = [
+        eq(memoryEntries.projectId, input.projectId),
+        eq(memoryEntries.level, input.level),
+        eq(memoryEntries.isActive, true),
+      ];
+      if (input.category) conditions.push(eq(memoryEntries.category, input.category));
+
+      const [existing] = await db.select()
+        .from(memoryEntries)
+        .where(and(...conditions))
+        .limit(1);
+
+      if (existing) {
+        // 合并内容：旧内容 + 新内容（分隔线）
+        const mergedContent = existing.content + '\n\n---\n' + input.content;
+        const newCount = (existing.updateCount || 1) + 1;
+        const shouldPromote = newCount >= 5 && existing.level !== 'L0';
+
+        const [updated] = await db.update(memoryEntries)
+          .set({
+            content: mergedContent,
+            updateCount: newCount,
+            level: shouldPromote ? 'L0' : existing.level,
+            updatedAt: new Date(),
+          })
+          .where(eq(memoryEntries.id, existing.id))
+          .returning();
+        return updated;
+      } else {
+        // 新增
+        const [entry] = await db.insert(memoryEntries)
+          .values({ ...input, updateCount: 1 })
+          .returning();
+        return entry;
+      }
     }),
 
   // 升级记忆（L3→L2→L1→L0）
