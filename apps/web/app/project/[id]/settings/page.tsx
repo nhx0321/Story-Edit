@@ -53,6 +53,29 @@ export default function ProjectSettingsPage({ params }: { params: { id: string }
   const { data: allSettings, isLoading } = trpc.project.listSettings.useQuery({ projectId });
   const { data: deletedSettings } = trpc.project.listDeletedSettings.useQuery({ projectId }, { enabled: showDeleted });
   const { data: allRelations } = trpc.project.listRelationships.useQuery({ projectId });
+  // 项目统计（用于正文创作跳转）
+  const { data: projectStats } = trpc.project.getProjectStats.useQuery({ projectId });
+  // 大纲树（用于查找第一个章节）
+  const { data: outlineTreeForNav } = trpc.project.getOutlineTree.useQuery(
+    { projectId },
+    { enabled: progress.hasChapters && !projectStats?.recentChapter },
+  );
+  // 计算正文创作链接
+  const chapterHref = (() => {
+    if (projectStats?.recentChapter) {
+      return `/project/${projectId}/chapter/${projectStats.recentChapter.id}`;
+    }
+    if (outlineTreeForNav && outlineTreeForNav.length > 0) {
+      const firstVol = outlineTreeForNav[0];
+      if (firstVol?.units && firstVol.units.length > 0) {
+        const firstUnit = firstVol.units[0];
+        if (firstUnit?.chapters && firstUnit.chapters.length > 0) {
+          return `/project/${projectId}/chapter/${firstUnit.chapters[0].id}`;
+        }
+      }
+    }
+    return `/project/${projectId}/outline`;
+  })();
   // 加载完整大纲树（用于 AI 创作上下文）
   const { data: outlineTree } = trpc.project.getOutlineTree.useQuery(
     { projectId },
@@ -182,9 +205,9 @@ export default function ProjectSettingsPage({ params }: { params: { id: string }
         currentPath="/settings"
         progress={progress}
       />
-      <main className="flex-1 p-8">
-        <div className="max-w-4xl mx-auto">
-          <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
+      <main className="flex-1 p-0">
+        <div className="flex flex-col h-full">
+          <div className="flex items-center gap-2 text-sm text-gray-500 px-8 pt-8">
             <Link href="/dashboard" className="hover:text-gray-900 transition">项目列表</Link>
             <span className="text-gray-300">/</span>
             <Link href={`/project/${projectId}`} className="hover:text-gray-900 transition">概览</Link>
@@ -193,7 +216,7 @@ export default function ProjectSettingsPage({ params }: { params: { id: string }
             {progress.settingComplete && <span className="text-green-500 text-xs font-bold ml-0.5" title="设定管理完成">✓</span>}
             {progress.hasChapters && !progress.settingComplete && <span className="text-amber-500 text-[10px] animate-pulse ml-0.5" title="可开始设定">→</span>}
           </div>
-        <div className="flex items-center justify-between mt-4 mb-6">
+        <div className="px-8 flex items-center justify-between mt-4 mb-6">
           <h1 className="text-2xl font-bold">设定管理</h1>
           <div className="flex gap-2">
             {/* AI 设定 — 黑底白字，最左侧 */}
@@ -202,7 +225,7 @@ export default function ProjectSettingsPage({ params }: { params: { id: string }
               AI 设定
             </button>
             <button onClick={() => openDialog('category')}
-              className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition">
+              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:border-gray-500 transition">
               + 新建类目
             </button>
             <button onClick={() => openDialog('entry')}
@@ -258,7 +281,7 @@ export default function ProjectSettingsPage({ params }: { params: { id: string }
           </div>
         ) : (
 
-        <div className="flex gap-0 -mx-8">
+        <div className="flex gap-0 flex-1">
           {/* 左侧类目列表 — 竖排紧贴ProjectSidebar */}
           <div className="w-48 shrink-0 border-r border-gray-200 bg-white">
             <div className="p-3 border-b border-gray-100">
@@ -299,22 +322,6 @@ export default function ProjectSettingsPage({ params }: { params: { id: string }
             </div>
           </div>
         </div>
-        )}
-      </div>
-
-      {/* 创作关联导航 */}
-      <div className="grid grid-cols-2 gap-4 mt-6 max-w-4xl mx-auto">
-        <Link href={`/project/${projectId}/outline`}
-          className="bg-white rounded-xl border border-gray-200 p-4 hover:border-gray-400 transition text-center">
-          <p className="text-sm font-medium text-gray-900">前往大纲编辑</p>
-          <p className="text-xs text-gray-400 mt-1">调整剧情结构 · 规划卷/单元/章节</p>
-        </Link>
-        {progress.hasChapters && (
-          <Link href={`/project/${projectId}/chapters`}
-            className="bg-white rounded-xl border border-gray-200 p-4 hover:border-gray-400 transition text-center">
-            <p className="text-sm font-medium text-gray-900">前往正文创作</p>
-            <p className="text-xs text-gray-400 mt-1">进入章节编辑器撰写正文</p>
-          </Link>
         )}
       </div>
 
@@ -425,42 +432,59 @@ export default function ProjectSettingsPage({ params }: { params: { id: string }
         />
       )}
 
-      {/* 构建 AI 上下文：已有设定（大纲由 use-chat.ts 通过 fullOutline 统一注入） */}
-      {(() => {
-        let ctx = '';
-        if (allSettings && allSettings.length > 0) {
-          const cats = [...new Set(allSettings.map(s => s.category))];
-          ctx += `## 已创建的设定类目\n${cats.join('、')}\n\n`;
-          ctx += `## 已有设定条目（共 ${allSettings.length} 条）\n`;
-          allSettings.slice(0, 30).forEach(s => {
-            ctx += `[${s.category}] ${s.title}: ${s.content.slice(0, 200)}\n`;
-          });
-          ctx += '\n';
-        }
-        if (!ctx) {
-          ctx = '（项目尚无设定，请根据用户的要求逐步搭建世界观和设定体系）\n\n';
-        }
-        return (
-          <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)}
-            projectId={projectId} conversationType="settings" roleKey="setting_editor" title="AI 设定"
-            fullOutline={outlineTree}
-            storyNarrative={storyNarrative}
-            customContextPrompt={ctx}
-            onActionConfirmed={() => utils.project.listSettings.invalidate({ projectId })}
-            onNavigateToOutline={() => { window.location.href = `/project/${projectId}/outline`; }} />
-        );
-      })()}
+      {/* AI 设定 ChatPanel */}
+      {chatOpen && (
+        <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)}
+          projectId={projectId} conversationType="settings" roleKey="setting_editor" title="AI 设定"
+          fullOutline={outlineTree}
+          storyNarrative={storyNarrative}
+          customContextPrompt={(() => {
+            let ctx = '';
+            if (allSettings && allSettings.length > 0) {
+              const cats = [...new Set(allSettings.map(s => s.category))];
+              ctx += `## 已创建的设定类目\n${cats.join('、')}\n\n`;
+              ctx += `## 已有设定条目（共 ${allSettings.length} 条）\n`;
+              allSettings.slice(0, 30).forEach(s => {
+                ctx += `[${s.category}] ${s.title}: ${s.content.slice(0, 200)}\n`;
+              });
+              ctx += '\n';
+            }
+            if (!ctx) {
+              ctx = '（项目尚无设定，请根据用户的要求逐步搭建世界观和设定体系）\n\n';
+            }
+            return ctx;
+          })()}
+          onActionConfirmed={() => utils.project.listSettings.invalidate({ projectId })}
+          onNavigateToOutline={() => { window.location.href = `/project/${projectId}/outline`; }} />
+      )}
 
       {/* AI 修改设定 ChatPanel */}
-      <ChatPanel open={aiEditChatOpen} onClose={() => { setAiEditChatOpen(false); setAiEditSetting(null); }}
-        projectId={projectId} conversationType="settings" roleKey="setting_editor"
-        title={`AI 修改 — ${aiEditSetting?.title || ''}`}
-        fullOutline={outlineTree}
-        storyNarrative={storyNarrative}
-        customContextPrompt={aiEditContextPrompt}
-        onActionConfirmed={() => {
-          utils.project.listSettings.invalidate({ projectId });
-        }} />
+      {aiEditChatOpen && (
+        <ChatPanel open={aiEditChatOpen} onClose={() => { setAiEditChatOpen(false); setAiEditSetting(null); }}
+          projectId={projectId} conversationType="settings" roleKey="setting_editor"
+          title={`AI 修改 — ${aiEditSetting?.title || ''}`}
+          fullOutline={outlineTree}
+          storyNarrative={storyNarrative}
+          customContextPrompt={aiEditContextPrompt}
+          onActionConfirmed={() => {
+            utils.project.listSettings.invalidate({ projectId });
+          }} />
+      )}
+
+      {/* 创作关联导航 */}
+      <div className="grid grid-cols-2 gap-4 mt-6 max-w-4xl mx-auto px-8">
+        <Link href={`/project/${projectId}/outline`}
+          className="bg-white rounded-xl border border-gray-200 p-4 hover:border-gray-400 transition text-center">
+          <p className="text-sm font-medium text-gray-900">前往大纲编辑</p>
+          <p className="text-xs text-gray-400 mt-1">调整剧情结构 · 规划卷/单元/章节</p>
+        </Link>
+        {progress.hasChapters && (
+          <Link href={chapterHref}
+            className="bg-white rounded-xl border border-gray-200 p-4 hover:border-gray-400 transition text-center">
+            <p className="text-sm font-medium text-gray-900">前往正文创作</p>
+          </Link>
+        )}
+      </div>
       </main>
     </div>
   );
@@ -492,15 +516,16 @@ function CollapsibleEntry({ s, onAiEdit, onEdit, onDelete }: {
       {expanded && (
         <div className="px-4 pb-4">
           <p className="text-sm text-gray-500 whitespace-pre-wrap mb-3">{s.content || '（无内容）'}</p>
-          <div className="flex items-center gap-2 text-xs border-t border-gray-100 pt-2">
-            <button onClick={onAiEdit} className="text-indigo-500 hover:text-indigo-700 transition" title="AI 修改">AI 修改</button>
-            <span className="text-gray-200">|</span>
-            <button onClick={onEdit} className="text-gray-400 hover:text-gray-600 transition">编辑</button>
-            <span className="text-gray-200">|</span>
-            <button onClick={onDelete} className="text-red-400 hover:text-red-600 transition">删除</button>
-          </div>
         </div>
       )}
+      {/* 按钮在头部右侧 — 折叠/展开时均显示 */}
+      <div className="flex items-center justify-end gap-2 px-4 py-1.5 border-t border-gray-100" onClick={e => e.stopPropagation()}>
+        <button onClick={onAiEdit} className="text-xs text-indigo-500 hover:text-indigo-700 transition font-medium" title="AI 修改">AI 修改</button>
+        <span className="text-gray-200">|</span>
+        <button onClick={onEdit} className="text-xs text-gray-400 hover:text-gray-600 transition">编辑</button>
+        <span className="text-gray-200">|</span>
+        <button onClick={onDelete} className="text-xs text-red-400 hover:text-red-600 transition">删除</button>
+      </div>
     </div>
   );
 }

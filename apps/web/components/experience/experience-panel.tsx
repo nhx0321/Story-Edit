@@ -5,28 +5,31 @@ import { trpc } from '@/lib/trpc';
 import { SlidePanel } from '@/components/ui/slide-panel';
 import { ExperienceTemplateImport } from './experience-template-import';
 
-type LevelFilter = 'all' | 'L0' | 'L1' | 'L2' | 'L3';
+type LevelFilter = 'all' | 'L0' | 'L1' | 'L2' | 'L3' | 'L4';
 
 const LEVEL_COLORS: Record<string, string> = {
   L0: 'bg-red-100 text-red-700 border-red-200',
   L1: 'bg-orange-100 text-orange-700 border-orange-200',
   L2: 'bg-blue-100 text-blue-700 border-blue-200',
   L3: 'bg-green-100 text-green-700 border-green-200',
+  L4: 'bg-purple-100 text-purple-700 border-purple-200',
 };
 
 const LEVEL_DESCRIPTIONS: Record<string, string> = {
-  L0: '核心创作铁律 · 每章创作前AI必读',
-  L1: '项目特色要求 · 要求AI贯彻风格',
-  L2: '近三章重点/常犯问题 · 重视和规避',
-  L3: '修改对比经验示例 · 自动滚动替换',
+  L0: '创作铁律 · 本项目必须做和不能做的事项（每章创作前必读）',
+  L1: '写作偏好 · 根据项目类型题材的风格要求（每章创作前必读）',
+  L2: '关键数值 · 角色状态、经验值、道具数量、任务天数等关键信息（每章自动更新）',
+  L3: '经验总结 · 从写作对比中提取的最近创作经验（每章创作前必读）',
+  L4: '写作对比 · 草稿与定稿差异分析（正文作者不阅读）',
 };
 
-const TABS: { key: LevelFilter; label: string }[] = [
-  { key: 'all', label: '全部' },
-  { key: 'L0', label: 'L0' },
-  { key: 'L1', label: 'L1' },
-  { key: 'L2', label: 'L2' },
-  { key: 'L3', label: 'L3' },
+const TABS: { key: LevelFilter; label: string; description: string }[] = [
+  { key: 'all', label: '全部', description: '显示所有等级经验' },
+  { key: 'L0', label: 'L0 创作铁律', description: '核心铁律 — 每章创作前必读，必做/必不做的硬性要求' },
+  { key: 'L1', label: 'L1 写作偏好', description: '项目特色 — 风格特色要求，AI 创作时贯彻执行' },
+  { key: 'L3', label: 'L3 经验总结', description: '近期经验 — 从写作对比中提取的创作经验参考' },
+  { key: 'L2', label: 'L2 关键数值', description: '关键数值 — 角色状态、经验值、道具数量、任务天数等（每章自动更新）' },
+  { key: 'L4', label: 'L4 写作对比', description: '草稿 vs 定稿差异分析 — 正文作者不阅读，仅供后台分析' },
 ];
 
 interface ExperiencePanelProps {
@@ -44,7 +47,7 @@ export function ExperiencePanel({ open, onClose, projectId, onSeedDefaults }: Ex
   const [editLevel, setEditLevel] = useState<string>('');
   const [showNewForm, setShowNewForm] = useState(false);
   const [newContent, setNewContent] = useState('');
-  const [newLevel, setNewLevel] = useState<'L0' | 'L1' | 'L2' | 'L3'>('L2');
+  const [newLevel, setNewLevel] = useState<'L0' | 'L1' | 'L2' | 'L3' | 'L4'>('L2');
   const [newCategory, setNewCategory] = useState('');
 
   const levelFilter = activeTab === 'all' ? undefined : activeTab;
@@ -117,21 +120,22 @@ export function ExperiencePanel({ open, onClose, projectId, onSeedDefaults }: Ex
 
   return (
     <>
-      <SlidePanel open={open} onClose={onClose} title="创作经验管理" width="w-[520px]">
+      <SlidePanel open={open} onClose={onClose} title="创作经验管理" width="w-[600px]">
         <div className="flex flex-col h-full">
-          {/* 等级 Tab */}
-          <div className="flex border-b border-gray-100 px-3">
+          {/* 等级 Tab — 带文字说明 */}
+          <div className="px-3 pt-2 space-y-1.5 border-b border-gray-100 pb-2">
             {TABS.map(tab => (
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}
-                className={`flex-1 py-2 text-xs font-medium transition ${
+                className={`w-full text-left py-1.5 px-2 rounded-lg transition ${
                   activeTab === tab.key
-                    ? 'border-b-2 border-gray-900 text-gray-900 bg-gray-50'
-                    : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
+                    ? 'bg-gray-100 text-gray-900'
+                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
                 }`}
               >
-                {tab.label}
+                <span className="text-sm font-medium">{tab.label}</span>
+                <span className="text-xs text-gray-400 ml-2">{tab.description}</span>
               </button>
             ))}
           </div>
@@ -184,7 +188,7 @@ export function ExperiencePanel({ open, onClose, projectId, onSeedDefaults }: Ex
                         onChange={e => setEditLevel(e.target.value)}
                         className="text-xs bg-white border border-gray-200 rounded px-2 py-1"
                       >
-                        {['L0', 'L1', 'L2', 'L3'].map(l => (
+                        {['L0', 'L1', 'L2', 'L3', 'L4'].map(l => (
                           <option key={l} value={l}>{l}</option>
                         ))}
                       </select>
@@ -284,6 +288,12 @@ export function ExperiencePanel({ open, onClose, projectId, onSeedDefaults }: Ex
           {/* 底部按钮 */}
           <div className="px-3 py-2 border-t border-gray-100 flex gap-2">
             <button
+              onClick={onClose}
+              className="py-2 px-3 bg-red-50 text-red-600 rounded-lg text-xs font-medium hover:bg-red-100 transition border border-red-200"
+            >
+              关闭
+            </button>
+            <button
               onClick={() => setShowImport(true)}
               className="py-2 px-3 border border-gray-300 rounded-lg text-xs font-medium hover:bg-gray-50 transition"
             >
@@ -303,7 +313,7 @@ export function ExperiencePanel({ open, onClose, projectId, onSeedDefaults }: Ex
               disabled={exportAllToLibrary.isPending}
               className="flex-1 py-2 bg-gray-900 text-white rounded-lg text-xs font-medium hover:bg-gray-800 transition disabled:opacity-50"
             >
-              {exportAllToLibrary.isPending ? '导出中...' : '导出到模板库(L0-L3)'}
+              {exportAllToLibrary.isPending ? '导出中...' : '导出到模板库(L0-L2)'}
             </button>
           </div>
         </div>

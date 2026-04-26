@@ -1,104 +1,105 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { trpc } from '@/lib/trpc';
+import { useWorkflowProgress } from '@/lib/use-workflow-progress';
+import { ProjectSidebar } from '@/components/layout/project-sidebar';
 
 export default function ProjectPage({ params }: { params: { id: string } }) {
   const router = useRouter();
   const { data: project, isLoading } = trpc.project.get.useQuery({ id: params.id });
   const { data: stats } = trpc.project.getProjectStats.useQuery({ projectId: params.id });
+  const progress = useWorkflowProgress(params.id);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [welcomeDismissed, setWelcomeDismissed] = useState(false);
+
+  useEffect(() => {
+    const key = `storyedit_welcome_${params.id}`;
+    if (localStorage.getItem(key)) setWelcomeDismissed(true);
+  }, [params.id]);
+
+  const dismissWelcome = () => {
+    localStorage.setItem(`storyedit_welcome_${params.id}`, '1');
+    setWelcomeDismissed(true);
+  };
 
   const deleteMutation = trpc.project.delete.useMutation({
     onSuccess: () => router.push('/dashboard'),
   });
 
-  const sidebarItems = [
-    { href: '', label: '概览', icon: '□' },
-    { href: '/outline', label: '大纲', icon: '≡' },
-    { href: '/settings', label: '设定', icon: '▣' },
-    { href: '/chapters', label: '正文', icon: '▤' },
-    { href: '/templates', label: '模板', icon: '▦' },
-    { href: '/agents', label: 'AI 助手', icon: '✦' },
-  ];
+  // 监听工作流步骤完成事件以刷新进度
+  useEffect(() => {
+    const handler = () => progress.refetch();
+    window.addEventListener('workflow-step-completed', handler);
+    return () => window.removeEventListener('workflow-step-completed', handler);
+  }, [progress]);
 
   if (isLoading) {
     return <div className="min-h-screen bg-gray-50 flex items-center justify-center text-gray-400">加载中...</div>;
   }
 
+  const isNewProject = !progress.hasVolumes && !progress.hasChapters && progress.settingCount === 0;
+  const showWelcome = isNewProject && !welcomeDismissed && !progress.isLoading;
+
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      <aside className="w-56 bg-white border-r border-gray-200 p-4 flex flex-col" data-guide-target="project-sidebar">
-        <div className="mb-6">
-          <Link href="/dashboard" className="text-xs text-gray-400 hover:text-gray-600">&larr; 项目列表</Link>
-          <h2 className="font-bold mt-2 truncate">{project?.name || '项目'}</h2>
-          <p className="text-xs text-gray-500">{project?.genre} · {project?.style}</p>
-        </div>
-        <nav className="space-y-1 flex-1">
-          {sidebarItems.map(item => (
-            <Link key={item.label} href={`/project/${params.id}${item.href}`}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition">
-              <span className="text-gray-400">{item.icon}</span>
-              {item.label}
-            </Link>
-          ))}
-        </nav>
-        <div className="mt-4 pt-4 border-t border-gray-100">
-          {showDeleteConfirm ? (
-            <div className="space-y-2">
-              <p className="text-xs text-red-500">确认删除此项目？</p>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => { deleteMutation.mutate({ id: params.id }); }}
-                  disabled={deleteMutation.isPending}
-                  className="flex-1 px-3 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition disabled:opacity-50"
-                >
-                  确认删除
-                </button>
-                <button
-                  onClick={() => setShowDeleteConfirm(false)}
-                  className="flex-1 px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition"
-                >
-                  取消
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              onClick={() => setShowDeleteConfirm(true)}
-              className="w-full px-3 py-2 text-sm text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition text-left"
-            >
-              删除项目
-            </button>
-          )}
-        </div>
-      </aside>
+      <ProjectSidebar
+        projectId={params.id}
+        projectName={project?.name || '项目'}
+        projectGenre={project?.genre}
+        projectStyle={project?.style}
+        currentPath=""
+        progress={progress}
+      />
 
       <main className="flex-1 p-8">
+        {/* 欢迎横幅（空项目首次进入） */}
+        {showWelcome && (
+          <div className="mb-6 bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-xl p-5 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">🎉</span>
+              <div>
+                <p className="font-semibold text-gray-900">欢迎开始创作之旅！</p>
+                <p className="text-sm text-gray-500 mt-0.5">按照 大纲编辑 → 设定管理 → 正文创作 的顺序，AI 将全程协助你完成创作。</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Link href="/help"
+                className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition">
+                查看引导
+              </Link>
+              <button onClick={dismissWelcome}
+                className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 transition">
+                稍后再说
+              </button>
+            </div>
+          </div>
+        )}
+
         <h1 className="text-2xl font-bold mb-6">项目概览</h1>
-        <div className="grid grid-cols-4 gap-4 mb-8" data-guide-target="overview-stats">
-          <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <p className="text-sm text-gray-500">卷 / 单元 / 章节</p>
-            <p className="text-2xl font-bold mt-1">{stats?.volumeCount ?? 0} / {stats?.unitCount ?? 0} / {stats?.chapterCount ?? 0}</p>
+        <div className="grid grid-cols-4 gap-4 mb-4" data-guide-target="overview-stats">
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <p className="text-xs text-gray-500">卷 / 单元 / 章节</p>
+            <p className="text-xl font-bold mt-1">{stats?.volumeCount ?? 0} / {stats?.unitCount ?? 0} / {stats?.chapterCount ?? 0}</p>
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <p className="text-sm text-gray-500">总字数</p>
-            <p className="text-2xl font-bold mt-1">{(stats?.totalWords ?? 0).toLocaleString()}</p>
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <p className="text-xs text-gray-500">总字数</p>
+            <p className="text-xl font-bold mt-1">{(stats?.totalWords ?? 0).toLocaleString()}</p>
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <p className="text-sm text-gray-500">创作进度</p>
-            <p className="text-2xl font-bold mt-1">
-              <span className="text-green-600">{stats?.finalCount ?? 0}</span>
-              <span className="text-gray-400 text-base font-normal"> 定稿 / </span>
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <p className="text-xs text-gray-500">创作进度</p>
+            <p className="text-xl font-bold mt-1">
+              <span className="text-gray-700">{stats?.finalCount ?? 0}</span>
+              <span className="text-gray-400 text-sm font-normal"> 定稿 / </span>
               <span className="text-yellow-600">{stats?.draftCount ?? 0}</span>
-              <span className="text-gray-400 text-base font-normal"> 草稿</span>
+              <span className="text-gray-400 text-sm font-normal"> 草稿</span>
             </p>
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <p className="text-sm text-gray-500">设定词条</p>
-            <p className="text-2xl font-bold mt-1">{stats?.settingCount ?? 0}</p>
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <p className="text-xs text-gray-500">设定词条</p>
+            <p className="text-xl font-bold mt-1">{stats?.settingCount ?? 0}</p>
           </div>
         </div>
 
@@ -115,34 +116,70 @@ export default function ProjectPage({ params }: { params: { id: string } }) {
           </div>
         )}
 
-        <h2 className="font-semibold mb-3">快捷操作</h2>
-        <div className="grid grid-cols-3 gap-3">
-          <Link href={`/project/${params.id}/outline`}
-            className="bg-white rounded-xl border border-gray-200 p-4 hover:border-gray-400 transition">
-            <p className="font-medium">编辑大纲</p>
-            <p className="text-sm text-gray-500 mt-1">构思和调整故事结构</p>
-          </Link>
-          <Link href={`/project/${params.id}/settings`}
-            className="bg-white rounded-xl border border-gray-200 p-4 hover:border-gray-400 transition">
-            <p className="font-medium">管理设定</p>
-            <p className="text-sm text-gray-500 mt-1">人物、世界观、力量体系</p>
-          </Link>
-          <Link href={`/project/${params.id}/outline`}
-            className="bg-white rounded-xl border border-gray-200 p-4 hover:border-gray-400 transition">
-            <p className="font-medium">继续创作</p>
-            <p className="text-sm text-gray-500 mt-1">从大纲进入章节编辑</p>
-          </Link>
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-8">
+          <h2 className="text-lg font-semibold text-center text-gray-800 mb-6">AI协作，开始创作之旅</h2>
+          <div className="grid grid-cols-3 gap-6">
+            <Link href={`/project/${params.id}/outline`}
+              className={`group rounded-xl border-2 p-8 text-center hover:border-gray-900 hover:shadow-lg transition-all duration-200 ${progress.hasChapters ? 'border-gray-300 bg-gray-50/50' : progress.hasVolumes ? 'border-gray-200 bg-gray-50' : 'border-gray-200 animate-cta-pulse'}`}>
+              <p className="text-2xl font-bold text-gray-900 mb-3">大纲编辑</p>
+              <p className="text-sm text-gray-400">构思和调整故事结构</p>
+              <div className="mt-3">
+                {progress.hasChapters ? (
+                  <span className="inline-flex items-center gap-1 text-xs text-gray-600 font-medium">
+                    <span className="text-gray-500">✓</span> 已完成
+                  </span>
+                ) : progress.hasVolumes ? (
+                  <span className="inline-flex items-center gap-1 text-xs text-gray-600 font-medium">
+                    进行中
+                  </span>
+                ) : (
+                  <span className="inline-block text-xs text-gray-400 bg-gray-100 px-2.5 py-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">开始 →</span>
+                )}
+              </div>
+            </Link>
+            <Link href={`/project/${params.id}/settings`}
+              className={`group rounded-xl border-2 p-8 text-center hover:border-gray-900 hover:shadow-lg transition-all duration-200 ${progress.settingComplete ? 'border-gray-300 bg-gray-50/50' : progress.settingCount > 0 && !progress.hasChapters ? 'border-gray-200 bg-gray-50 animate-cta-pulse' : 'border-gray-200'}`} style={{ animationDelay: progress.settingComplete ? '0s' : '0.6s' }}>
+              <p className="text-2xl font-bold text-gray-900 mb-3">设定管理</p>
+              <p className="text-sm text-gray-400">人物、世界观、力量体系</p>
+              <div className="mt-3">
+                {progress.settingComplete ? (
+                  <span className="inline-flex items-center gap-1 text-xs text-gray-600 font-medium">
+                    <span className="text-gray-500">✓</span> 已完成
+                  </span>
+                ) : progress.settingCount > 0 ? (
+                  <span className="inline-flex items-center gap-1 text-xs text-gray-600 font-medium">
+                    进行中 ({progress.settingCount}/10)
+                  </span>
+                ) : (
+                  <span className="inline-block text-xs text-gray-400 bg-gray-100 px-2.5 py-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">开始 →</span>
+                )}
+              </div>
+            </Link>
+            <Link href={stats?.recentChapter ? `/project/${params.id}/chapter/${stats.recentChapter.id}` : progress.hasChapters ? `/project/${params.id}/outline` : `/project/${params.id}/chapters`}
+              className={`group rounded-xl border-2 p-8 text-center hover:border-gray-900 hover:shadow-lg transition-all duration-200 ${progress.chapterFinal > 0 || progress.chapterDraft > 0 ? 'border-gray-300 bg-gray-50/50' : progress.hasChapters ? 'border-gray-200 bg-gray-50 animate-cta-pulse' : 'border-gray-200'}`} style={{ animationDelay: '1.2s' }}>
+              <p className="text-2xl font-bold text-gray-900 mb-3">正文创作</p>
+              <p className="text-sm text-gray-400">从大纲进入章节编辑</p>
+              <div className="mt-3">
+                {progress.chapterFinal > 0 ? (
+                  <span className="inline-flex items-center gap-1 text-xs text-gray-600 font-medium">
+                    <span className="text-gray-500">✓</span> 已定稿 {progress.chapterFinal} 章
+                  </span>
+                ) : progress.chapterDraft > 0 ? (
+                  <span className="inline-flex items-center gap-1 text-xs text-gray-600 font-medium">
+                    进行中 ({progress.chapterDraft} 草稿)
+                  </span>
+                ) : progress.hasChapters ? (
+                  <span className="inline-flex items-center gap-1 text-xs text-blue-600 font-medium">
+                    就绪
+                  </span>
+                ) : (
+                  <span className="inline-block text-xs text-gray-400 bg-gray-100 px-2.5 py-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">开始 →</span>
+                )}
+              </div>
+            </Link>
+          </div>
         </div>
 
-        <div className="mt-6 bg-gradient-to-r from-gray-50 to-gray-100 rounded-xl border border-gray-200 p-4 flex items-center justify-between">
-          <div>
-            <p className="font-medium">需要灵感？去模板广场看看</p>
-            <p className="text-sm text-gray-500 mt-1">浏览创作方法论、参考作品、设定模板</p>
-          </div>
-          <Link href="/marketplace" className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition shrink-0">
-            浏览模板
-          </Link>
-        </div>
       </main>
     </div>
   );

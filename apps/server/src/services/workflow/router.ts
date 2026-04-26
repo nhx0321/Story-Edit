@@ -8,6 +8,7 @@ import {
   volumes, units, chapters, chapterVersions,
   settings, memoryEntries, userTemplates,
 } from '../../db/schema';
+import { checkContentFingerprint } from '../template/content-fingerprint';
 
 // 辅助：通过章节 → 单元 → 卷链验证项目归属
 async function verifyChapterOwner(chapterId: string, userId: string) {
@@ -119,7 +120,30 @@ export const workflowRouter = router({
         }
       }
 
-      return { ok: true, created };
+      // 内容指纹检测（非阻塞，检查所有梗概）
+      const warnings: Array<{ templateId: string; location: string }> = [];
+      try {
+        for (const volData of input.volumes) {
+          if (volData.synopsis && volData.synopsis.length >= 200) {
+            const r = await checkContentFingerprint(volData.synopsis);
+            if (r.matched && r.templateId) warnings.push({ templateId: r.templateId, location: `卷「${volData.title}」梗概` });
+          }
+          for (const unitData of volData.units) {
+            if (unitData.synopsis && unitData.synopsis.length >= 200) {
+              const r = await checkContentFingerprint(unitData.synopsis);
+              if (r.matched && r.templateId) warnings.push({ templateId: r.templateId, location: `单元「${unitData.title}」梗概` });
+            }
+            for (const chData of unitData.chapters) {
+              if (chData.synopsis && chData.synopsis.length >= 200) {
+                const r = await checkContentFingerprint(chData.synopsis);
+                if (r.matched && r.templateId) warnings.push({ templateId: r.templateId, location: `章节「${chData.title}」梗概` });
+              }
+            }
+          }
+        }
+      } catch { /* fingerprint check should never block save */ }
+
+      return { ok: true, created, warnings: warnings.length > 0 ? warnings : undefined };
     }),
 
   // 获取项目大纲完整结构
@@ -204,14 +228,41 @@ export const workflowRouter = router({
       const nextChapter = currentIdx < allChaptersInUnit.length - 1 ? allChaptersInUnit[currentIdx + 1] : null;
 
       // 获取项目所有设定
-      const relatedSettings = await db.select({
+      const allSettings = await db.select({
         category: settings.category,
         title: settings.title,
         content: settings.content,
       })
         .from(settings)
         .where(and(eq(settings.projectId, projectId), isNull(settings.deletedAt)))
-        .limit(50);
+        .limit(100);
+
+      // 智能设定匹配：根据章节梗概和上下文关键词筛选相关设定
+      const contextText = [ch.synopsis, prevChapter?.synopsis, nextChapter?.synopsis].filter(Boolean).join(' ');
+      const relevantSettings: typeof allSettings = [];
+      const otherSettings: typeof allSettings = [];
+      for (const s of allSettings) {
+        // 设定标题或内容中的关键词出现在上下文中，或上下文关键词出现在设定中
+        const titleWords = s.title.replace(/[，。、！？：；""''（）\s]/g, ' ').split(' ').filter(w => w.length >= 2);
+        const isRelevant = titleWords.some(w => contextText.includes(w))
+          || contextText.split(/[，。、！？：；""''（）\s]/).filter(w => w.length >= 2).some(w => s.title.includes(w) || s.content.includes(w));
+        if (isRelevant) relevantSettings.push(s);
+        else otherSettings.push(s);
+      }
+
+      // 获取 L0-L3 经验词条
+      const experienceEntries = await db.select({
+        level: memoryEntries.level,
+        category: memoryEntries.category,
+        content: memoryEntries.content,
+      })
+        .from(memoryEntries)
+        .where(and(
+          eq(memoryEntries.projectId, projectId),
+          eq(memoryEntries.isActive, true),
+          sql`${memoryEntries.level} IN ('L0', 'L1', 'L2', 'L3')`,
+        ))
+        .orderBy(asc(memoryEntries.level), asc(memoryEntries.createdAt));
 
       // 获取最新版本正文（用于生成自检提示）
       const [latestVersion] = await db.select()
@@ -221,7 +272,7 @@ export const workflowRouter = router({
         .limit(1);
 
       // 设定检测：分析梗概关键词，对比已有设定
-      const existingCategories = [...new Set(relatedSettings.map(s => s.category))];
+      const existingCategories = [...new Set(allSettings.map(s => s.category))];
       const settingKeywords: Record<string, string[]> = {
         '力量体系': ['力量', '修炼', '境界', '等级', '功法', '法术', '神通', '武技', '阵法', '炼丹', '炼器'],
         '世界观': ['世界', '大陆', '星球', '宇宙', '位面', '空间', '宗门', '门派', '帝国', '王朝', '国家'],
@@ -237,7 +288,6 @@ export const workflowRouter = router({
         const hasKeyword = keywords.some(kw => synopsisText.includes(kw));
         if (hasKeyword) missingSettings.push(category);
       }
-      // 通用检测：梗概中是否提到了任何设定关键词但无对应设定
       const hasAnySettingKeyword = allKeywords.some(kw => synopsisText.includes(kw));
       if (existingCategories.length === 0 && hasAnySettingKeyword) {
         missingSettings.push('基础设定');
@@ -251,7 +301,36 @@ export const workflowRouter = router({
         ? `${nextChapter.title}：${nextChapter.synopsis || '（无梗概）'}`
         : '（下一章梗概尚未规划，请先在大纲页面补充下一章的梗概以确保衔接）';
 
-      const settingSummary = relatedSettings.map(s => `[${s.category}] ${s.title}: ${s.content.slice(0, 200)}`).join('\n');
+      // 设定摘要：优先展示相关设定，其余折叠（精简化）
+      let settingSummary = '';
+      if (relevantSettings.length > 0) {
+        settingSummary += '### 本章相关设定\n';
+        settingSummary += relevantSettings.slice(0, 5).map(s => `[${s.category}] ${s.title}: ${s.content.slice(0, 150)}`).join('\n');
+        if (relevantSettings.length > 5) settingSummary += `\n...及其他 ${relevantSettings.length - 5} 条相关设定`;
+      }
+      if (otherSettings.length > 0) {
+        settingSummary += `\n\n### 其他设定（共 ${otherSettings.length} 条）`;
+      }
+      if (!settingSummary) settingSummary = '暂无设定，可自由发挥';
+
+      // 经验词条摘要（精简：每级最多输出前 3 条）
+      let experienceSummary = '';
+      const expByLevel: Record<string, string[]> = { L0: [], L1: [], L2: [], L3: [] };
+      for (const e of experienceEntries) {
+        if (expByLevel[e.level]) expByLevel[e.level].push(e.content);
+      }
+      if (expByLevel.L0.length > 0) {
+        experienceSummary += '### 创作铁律（必须遵守）\n' + expByLevel.L0.slice(0, 3).map((c, i) => `${i + 1}. ${c}`).join('\n') + '\n\n';
+      }
+      if (expByLevel.L1.length > 0) {
+        experienceSummary += '### 写作偏好\n' + expByLevel.L1.slice(0, 3).map((c, i) => `${i + 1}. ${c}`).join('\n') + '\n\n';
+      }
+      if (expByLevel.L2.length > 0) {
+        experienceSummary += '### 关键数值\n' + expByLevel.L2.slice(0, 3).map((c, i) => `${i + 1}. ${c}`).join('\n') + '\n\n';
+      }
+      if (expByLevel.L3.length > 0) {
+        experienceSummary += '### 近期经验\n' + expByLevel.L3.slice(0, 2).map((c, i) => `${i + 1}. ${c}`).join('\n') + '\n\n';
+      }
 
       const brief = `# 创作任务书
 
@@ -266,20 +345,14 @@ ${prevSynopsis}
 ${nextSynopsis}
 
 ## 相关设定
-${settingSummary || '暂无设定，可自由发挥'}
+${settingSummary}
 
-${missingSettings.length > 0 ? '## ⚠️ 设定提醒\n检测到剧情中涉及以下内容，但尚未创建相关设定：' + missingSettings.map(s => `- ${s}`).join('\n') + '\n建议先前往设定页面补充相关设定，再进行创作。\n' : ''}
-
-## 创作要求
-1. 紧扣章节梗概展开
-2. 与前文保持连贯
-3. 注意人物性格和世界观一致性
-4. 适当埋设伏笔
-5. 保持网文爽点节奏
-
+${missingSettings.length > 0 ? '## ⚠️ 设定提醒\n检测到剧情中涉及以下内容，但尚未创建相关设定：' + missingSettings.map(s => `\n- ${s}`).join('') + '\n' : ''}
+${experienceSummary ? '## 创作经验\n' + experienceSummary : ''}
 请根据以上信息创作本章正文。`;
 
       // 生成自检提示词
+      const relevantSettingSummary = relevantSettings.map(s => `[${s.category}] ${s.title}: ${s.content.slice(0, 200)}`).join('\n');
       const checkPrompt = latestVersion ? `你是一名专业的文学编辑和质量审核员。请对以下章节正文进行全面的自检，找出需要修改的问题。
 
 ## 章节信息
@@ -287,7 +360,7 @@ ${missingSettings.length > 0 ? '## ⚠️ 设定提醒\n检测到剧情中涉及
 - 梗概：${ch.synopsis || '无'}
 
 ## 相关设定
-${settingSummary || '暂无设定'}
+${relevantSettingSummary || '暂无设定'}
 
 ## 正文内容
 ${latestVersion.content.slice(0, 10000)}
@@ -304,15 +377,36 @@ ${latestVersion.content.slice(0, 10000)}
 7. 爽点与钩子
 8. 总体评分与修改建议` : '';
 
+      // 为缺失的类目查找可能相关的已有词条
+      const suggestedSettings: Array<{ category: string; id: string; title: string; snippet: string }> = [];
+      for (const missingCat of missingSettings) {
+        const keywords = settingKeywords[missingCat] || [];
+        for (const s of allSettings) {
+          if (s.category === missingCat) continue; // 跳过已有类目（这种情况不会出现，但防御性编程）
+          const matchScore = keywords.filter(kw => s.title.includes(kw) || (s.content || '').includes(kw)).length;
+          if (matchScore > 0) {
+            suggestedSettings.push({
+              category: missingCat,
+              id: `setting_${s.title}`,
+              title: s.title,
+              snippet: (s.content || '').slice(0, 100),
+            });
+          }
+        }
+      }
+
       return {
         brief,
         chapter: ch,
         prevChapter,
         nextChapter,
         prevChapters: prevChapter ? [prevChapter] : [],
-        settingCount: relatedSettings.length,
+        settingCount: allSettings.length,
+        relevantSettingCount: relevantSettings.length,
+        allSettingCategories: existingCategories,
         checkPrompt,
         missingSettings,
+        suggestedSettings: suggestedSettings.slice(0, 10),
       };
     }),
 
@@ -357,7 +451,18 @@ ${latestVersion.content.slice(0, 10000)}
         })
         .where(eq(chapters.id, input.chapterId));
 
-      return { version, wordCount: wc };
+      // 内容指纹检测（非阻塞）
+      let warning: { templateId: string } | undefined;
+      if (input.content.length >= 200) {
+        try {
+          const result = await checkContentFingerprint(input.content);
+          if (result.matched && result.templateId) {
+            warning = { templateId: result.templateId };
+          }
+        } catch { /* fingerprint check should never block save */ }
+      }
+
+      return { version, wordCount: wc, warning };
     }),
 
   // 获取章节正文版本列表
@@ -440,31 +545,6 @@ ${chList.map(c => `- ${c.title}：${c.synopsis || '（无梗概）'}`).join('\n'
       };
     }),
 
-  // 保存创作经验
-  saveExperience: protectedProcedure
-    .input(z.object({
-      projectId: z.string().uuid(),
-      chapterId: z.string().uuid(),
-      experience: z.object({
-        highlights: z.array(z.string()).optional(),
-        issues: z.array(z.string()).optional(),
-        lessons: z.array(z.string()).optional(),
-      }),
-    }))
-    .mutation(async ({ ctx, input }) => {
-      await verifyProjectOwner(input.projectId, ctx.userId);
-      const content = JSON.stringify(input.experience, null, 2);
-      await db.insert(memoryEntries).values({
-        projectId: input.projectId,
-        level: 'L2',
-        category: '创作经验',
-        content: content,
-        sourceChapterId: input.chapterId,
-        isActive: true,
-      });
-      return { ok: true };
-    }),
-
   // 获取创作进度
   getProjectProgress: protectedProcedure
     .input(z.object({ projectId: z.string().uuid() }))
@@ -526,7 +606,7 @@ ${chList.map(c => `- ${c.title}：${c.synopsis || '（无梗概）'}`).join('\n'
       };
     }),
 
-  // 保存创作经验（用于下一章任务书调用）
+  // 保存章节经验（合并为单条 L3 条目）
   saveChapterExperience: protectedProcedure
     .input(z.object({
       projectId: z.string().uuid(),
@@ -537,22 +617,13 @@ ${chList.map(c => `- ${c.title}：${c.synopsis || '（无梗概）'}`).join('\n'
     .mutation(async ({ ctx, input }) => {
       await verifyProjectOwner(input.projectId, ctx.userId);
 
-      // 保存创作进度
-      await db.insert(memoryEntries).values({
-        projectId: input.projectId,
-        level: 'L2',
-        category: '创作进度',
-        content: input.progressSummary,
-        sourceChapterId: input.chapterId,
-        isActive: true,
-      });
+      const combinedContent = `创作进度：${input.progressSummary}\n\n创作经验：${input.experienceSummary}`;
 
-      // 保存创作经验
       await db.insert(memoryEntries).values({
         projectId: input.projectId,
-        level: 'L2',
-        category: '创作经验',
-        content: input.experienceSummary,
+        level: 'L3',
+        category: '章节经验',
+        content: combinedContent,
         sourceChapterId: input.chapterId,
         isActive: true,
       });
@@ -575,7 +646,7 @@ ${chList.map(c => `- ${c.title}：${c.synopsis || '（无梗概）'}`).join('\n'
         .where(and(
           eq(memoryEntries.projectId, input.projectId),
           eq(memoryEntries.isActive, true),
-          sql`${memoryEntries.category} IN ('创作进度', '创作经验')`,
+          sql`${memoryEntries.category} IN ('创作进度', '创作经验', '章节经验')`,
         ))
         .orderBy(desc(memoryEntries.createdAt))
         .limit(10);
@@ -589,7 +660,7 @@ ${chList.map(c => `- ${c.title}：${c.synopsis || '（无梗概）'}`).join('\n'
   getMemories: protectedProcedure
     .input(z.object({
       projectId: z.string().uuid(),
-      level: z.enum(['L0', 'L1', 'L2', 'L3']).optional(),
+      level: z.enum(['L0', 'L1', 'L2', 'L3', 'L4']).optional(),
       category: z.string().optional(),
     }))
     .query(async ({ ctx, input }) => {
@@ -611,7 +682,7 @@ ${chList.map(c => `- ${c.title}：${c.synopsis || '（无梗概）'}`).join('\n'
   createMemory: protectedProcedure
     .input(z.object({
       projectId: z.string().uuid(),
-      level: z.enum(['L0', 'L1', 'L2', 'L3']),
+      level: z.enum(['L0', 'L1', 'L2', 'L3', 'L4']),
       category: z.string().optional(),
       content: z.string().min(1),
       chapterId: z.string().uuid().optional(),
@@ -633,7 +704,7 @@ ${chList.map(c => `- ${c.title}：${c.synopsis || '（无梗概）'}`).join('\n'
   updateMemory: protectedProcedure
     .input(z.object({
       memoryId: z.string().uuid(),
-      level: z.enum(['L0', 'L1', 'L2', 'L3']).optional(),
+      level: z.enum(['L0', 'L1', 'L2', 'L3', 'L4']).optional(),
       category: z.string().optional(),
       content: z.string().min(1).optional(),
     }))
@@ -673,89 +744,13 @@ ${chList.map(c => `- ${c.title}：${c.synopsis || '（无梗概）'}`).join('\n'
       return { ok: true };
     }),
 
-  // AI 分析草稿 vs 定稿差异，生成经验
-  analyzeDraftVsFinal: protectedProcedure
-    .input(z.object({ chapterId: z.string().uuid() }))
-    .mutation(async ({ ctx, input }) => {
-      const projectId = await verifyChapterOwner(input.chapterId, ctx.userId);
-
-      // 获取最新的定稿版本
-      const [finalVersion] = await db.select()
-        .from(chapterVersions)
-        .where(and(
-          eq(chapterVersions.chapterId, input.chapterId),
-          eq(chapterVersions.versionType, 'final'),
-        ))
-        .orderBy(desc(chapterVersions.versionNumber))
-        .limit(1);
-
-      if (!finalVersion) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: '未找到定稿版本' });
-      }
-
-      // 获取最近的草稿版本（versionType='draft' 且 versionNumber 小于定稿）
-      const [draftVersion] = await db.select()
-        .from(chapterVersions)
-        .where(and(
-          eq(chapterVersions.chapterId, input.chapterId),
-          eq(chapterVersions.versionType, 'draft'),
-        ))
-        .orderBy(desc(chapterVersions.versionNumber))
-        .limit(1);
-
-      if (!draftVersion) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: '未找到草稿版本' });
-      }
-
-      const draftContent = draftVersion.content.slice(0, 15000);
-      const finalContent = finalVersion.content.slice(0, 15000);
-
-      const prompt = `以下是同一章节的草稿和定稿版本。请分析差异并总结经验：
-
-## 草稿内容
-${draftContent}
-
-## 定稿内容
-${finalContent}
-
-请按以下格式输出分析结果：
-
-### 草稿中存在的问题
-（逻辑/节奏/人物/伏笔等方面的问题）
-
-### 定稿相比草稿的主要改进
-（具体的改进点和优化方向）
-
-### 创作经验提炼
-（从这次修改中可以提炼的经验教训）
-
-### 等级分类建议
-将每条经验按 L0-L3 分类：
-- L0 = 必读铁则（必须做/绝对不能做的事项，核心要求）
-- L1 = 重要改进（关键性的改进建议）
-- L2 = 近期经验（本次修改中产生的具体经验）
-- L3 = 修改示例（具体的修改对比示例）
-
-每条经验格式：[Lx] 经验标题\n经验内容`;
-
-      return {
-        draftVersionId: draftVersion.id,
-        draftVersionNumber: draftVersion.versionNumber,
-        finalVersionId: finalVersion.id,
-        finalVersionNumber: finalVersion.versionNumber,
-        analysisPrompt: prompt,
-        projectId,
-        chapterId: input.chapterId,
-      };
-    }),
-
   // 将分析结果保存为经验条目（分析结果确认后调用）
   saveAnalysisResults: protectedProcedure
     .input(z.object({
       projectId: z.string().uuid(),
       chapterId: z.string().uuid(),
       entries: z.array(z.object({
-        level: z.enum(['L0', 'L1', 'L2', 'L3']),
+        level: z.enum(['L0', 'L1', 'L2', 'L3', 'L4']),
         category: z.string().optional(),
         content: z.string().min(1),
       })),
@@ -815,38 +810,7 @@ ${finalContent}
       return template;
     }),
 
-  // 批量导出经验为模板
-  exportMemoriesAsTemplates: protectedProcedure
-    .input(z.object({
-      projectId: z.string().uuid(),
-      memoryIds: z.array(z.string().uuid()),
-    }))
-    .mutation(async ({ ctx, input }) => {
-      await verifyProjectOwner(input.projectId, ctx.userId);
-
-      const memories = await db.select()
-        .from(memoryEntries)
-        .where(and(
-          eq(memoryEntries.projectId, input.projectId),
-          eq(memoryEntries.isActive, true),
-        ));
-
-      const templates = [];
-      for (const memory of memories.filter(m => input.memoryIds.includes(m.id))) {
-        const [template] = await db.insert(userTemplates).values({
-          userId: ctx.userId,
-          projectId: input.projectId,
-          title: `[${memory.level}] ${memory.category || '经验'}`,
-          content: memory.content,
-          source: 'custom',
-        }).returning();
-        templates.push(template);
-      }
-
-      return { ok: true, count: templates.length, templates };
-    }),
-
-  // 导出全部经验到模板库（L0-L3 合并为一个创作经验类目模板）
+  // 导出全部经验到模板库（L0-L2 合并为一个创作经验类目模板）
   exportAllMemoriesToTemplate: protectedProcedure
     .input(z.object({ projectId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
@@ -857,6 +821,7 @@ ${finalContent}
         .where(and(
           eq(memoryEntries.projectId, input.projectId),
           eq(memoryEntries.isActive, true),
+          sql`${memoryEntries.level} IN ('L0', 'L1', 'L2')`,
         ))
         .orderBy(memoryEntries.level, memoryEntries.category);
 
@@ -868,12 +833,11 @@ ${finalContent}
       const levelLabels: Record<string, string> = {
         L0: '核心创作铁律',
         L1: '项目特色要求',
-        L2: '近期重点问题',
-        L3: '修改对比经验',
+        L2: '关键数值追踪',
       };
 
       let content = `# 创作经验模板\n\n`;
-      for (const level of ['L0', 'L1', 'L2', 'L3']) {
+      for (const level of ['L0', 'L1', 'L2']) {
         const levelMemories = memories.filter(m => m.level === level);
         if (levelMemories.length > 0) {
           content += `## [${level}] ${levelLabels[level]}\n\n`;
@@ -895,7 +859,7 @@ ${finalContent}
       return { ok: true, templateId: template.id, count: memories.length };
     }),
 
-  // 初始化预设经验模板
+  // 初始化预设经验模板（L0创作铁律 + L1写作偏好）
   seedDefaultExperiences: protectedProcedure
     .input(z.object({ projectId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
@@ -915,35 +879,32 @@ ${finalContent}
       }
 
       const defaultExperiences = [
+        // L0 — 创作铁律（本项目必须做和不能做的事项）
         {
           level: 'L0' as const,
-          category: '创作铁则',
+          category: '创作铁律',
           content: '正文必须紧扣章节梗概，不偏离、不自行添加梗概中没有的核心情节。这是创作的第一原则。',
         },
         {
           level: 'L0' as const,
-          category: '创作铁则',
+          category: '创作铁律',
           content: '开篇以场景或动作描写开始，不打招呼、不自我介绍。直接进入剧情。',
         },
         {
           level: 'L0' as const,
-          category: '创作铁则',
+          category: '创作铁律',
           content: '人物性格保持一致，不突兀反转。角色的行为必须符合其已建立的性格和动机。',
         },
         {
           level: 'L0' as const,
-          category: '写作规范',
-          content: '每个场景至少包含环境描写、人物动作、心理活动三要素。缺一不可。',
+          category: '创作铁律',
+          content: '不能出现色情、暴力等不当描写。保持内容健康向上。',
         },
+        // L1 — 写作偏好（项目类型题材通用提示词）
         {
-          level: 'L0' as const,
-          category: '写作规范',
-          content: '对话要符合人物身份和当前情绪。不同角色说话方式应有区分，体现各自性格。',
-        },
-        {
-          level: 'L0' as const,
-          category: '写作规范',
-          content: '每章结尾设置悬念或钩子，吸引读者继续阅读下一章。',
+          level: 'L1' as const,
+          category: '写作偏好',
+          content: '【通用网文写作偏好】\n1. 节奏明快，避免冗长描写\n2. 每章至少一个爽点或冲突\n3. 章节结尾设置悬念钩子\n4. 对话简洁有力，符合人物身份\n5. 场景转换要干净利落',
         },
       ];
 
@@ -960,65 +921,72 @@ ${finalContent}
       return { ok: true, seeded: true, count: values.length };
     }),
 
-  // 获取 L0-L3 经验供 AI 创作使用
+  // 获取 L0-L3 经验供 AI 创作使用（L4 正文作者不阅读）
   getMemoriesForWriter: protectedProcedure
     .input(z.object({ projectId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
       await verifyProjectOwner(input.projectId, ctx.userId);
 
-      // L0 全部获取，L1-L3 每级最近 10 条
-      const l0Entries = await db.select({
-        id: memoryEntries.id,
+      // L0/L1/L2/L3：合并为 1 次 DB 查询
+      const memoryData = await db.select({
         level: memoryEntries.level,
         category: memoryEntries.category,
         content: memoryEntries.content,
-        createdAt: memoryEntries.createdAt,
       })
         .from(memoryEntries)
         .where(and(
           eq(memoryEntries.projectId, input.projectId),
-          eq(memoryEntries.level, 'L0'),
           eq(memoryEntries.isActive, true),
+          sql`${memoryEntries.level} IN ('L0', 'L1', 'L2', 'L3')`,
         ))
-        .orderBy(asc(memoryEntries.createdAt));
+        .orderBy(asc(memoryEntries.level), asc(memoryEntries.createdAt));
 
-      const l1ToL3Entries: Array<{
-        id: string;
-        level: string;
-        category: string | null;
-        content: string;
-        createdAt: Date;
-      }> = [];
-
-      for (const level of ['L1', 'L2', 'L3'] as const) {
-        const entries = await db.select({
-          id: memoryEntries.id,
-          level: memoryEntries.level,
-          category: memoryEntries.category,
-          content: memoryEntries.content,
-          createdAt: memoryEntries.createdAt,
-        })
-          .from(memoryEntries)
-          .where(and(
-            eq(memoryEntries.projectId, input.projectId),
-            eq(memoryEntries.level, level),
-            eq(memoryEntries.isActive, true),
-          ))
-          .orderBy(desc(memoryEntries.createdAt))
-          .limit(10);
-        l1ToL3Entries.push(...entries);
+      // 按 level 分组
+      const grouped: Record<string, Array<{ category: string | null; content: string }>> = { L0: [], L1: [], L2: [], L3: [] };
+      for (const row of memoryData) {
+        if (grouped[row.level]) grouped[row.level].push({ category: row.category, content: row.content });
       }
 
-      const allEntries = [...l0Entries, ...l1ToL3Entries];
+      // 精简格式化输出
+      const levelLabels: Record<string, string> = {
+        L0: '创作铁律（必须遵守）',
+        L1: '写作偏好',
+        L2: '关键数值（角色状态/道具/数值等）',
+        L3: '近期经验',
+      };
 
-      // 格式化为文本
-      const experienceText = allEntries.map(e =>
-        `[${e.level}] ${e.category ? `【${e.category}】` : ''}\n${e.content}`,
-      ).join('\n\n');
+      let formattedText = '';
+      let num = 0;
+      for (const [level, entries] of Object.entries({ L0: grouped.L0, L1: grouped.L1 })) {
+        if (entries.length > 0) {
+          formattedText += `\n## ${levelLabels[level]}\n`;
+          num = 0;
+          for (const e of entries) {
+            num++;
+            formattedText += `${num}. ${e.content}\n`;
+          }
+        }
+      }
+
+      // L2 关键数值
+      if (grouped.L2.length > 0) {
+        formattedText += `\n## ${levelLabels.L2}\n`;
+        grouped.L2.forEach((e, i) => {
+          formattedText += `${i + 1}. ${e.content}\n`;
+        });
+      }
+
+      // L3 近期经验
+      if (grouped.L3.length > 0) {
+        formattedText += '\n## 近期经验\n';
+        grouped.L3.slice(0, 5).forEach((e, i) => {
+          formattedText += `${i + 1}. ${e.content}\n`;
+        });
+      }
 
       return {
-        entries: allEntries,
-        formattedText: experienceText,
+        formattedText,
+        totalCount: memoryData.length,
       };
     }),
 });

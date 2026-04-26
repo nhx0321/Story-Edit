@@ -10,6 +10,7 @@ import { ChatPanel } from '@/components/chat/chat-panel';
 import { WritingStylePanel } from '@/components/chapter/writing-style-panel';
 import { SelfCheckPanel, type CheckItem } from '@/components/chapter/self-check-panel';
 import { FinalizePanel } from '@/components/chapter/finalize-panel';
+import { ExperiencePanel } from '@/components/experience/experience-panel';
 import { OutlineSidebar } from '@/components/chapter/outline-sidebar';
 import { useWorkflowProgress } from '@/lib/use-workflow-progress';
 import { ProjectSidebar } from '@/components/layout/project-sidebar';
@@ -51,6 +52,7 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
   const [versionPanelOpen, setVersionPanelOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [writingStyleOpen, setWritingStyleOpen] = useState(false);
+  const [experiencePanelOpen, setExperiencePanelOpen] = useState(false);
 
   // Get AI configs for self-check
   const { data: configs } = trpc.ai.listConfigs.useQuery(undefined, { enabled: activeTab === 'checklist' || activeTab === 'finalize' });
@@ -239,23 +241,23 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
     });
   }, []);
 
-  const tabs = [
-    { key: 'brief' as TabKey, label: '任务书', icon: '📋' },
-    { key: 'draft' as TabKey, label: '草稿', icon: '✍️' },
-    { key: 'checklist' as TabKey, label: '自检', icon: '✓' },
-    { key: 'finalize' as TabKey, label: '定稿', icon: '🎯' },
+  const tabs: { key: TabKey; label: string; step: string }[] = [
+    { key: 'brief', label: '任务书', step: '01' },
+    { key: 'draft', label: '开始创作', step: '02' },
+    { key: 'checklist', label: '自检', step: '03' },
+    { key: 'finalize', label: '定稿', step: '04' },
   ];
 
   if (detailLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-white flex items-center justify-center">
         <p className="text-gray-400">加载中...</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
+    <div className="min-h-screen bg-white flex">
       <ProjectSidebar
         projectId={projectId}
         projectName={projectData?.name || '项目'}
@@ -274,25 +276,27 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
 
       <main className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <div className="bg-white border-b border-gray-200 px-6 py-4">
-          <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
-            <Link href="/dashboard" className="hover:text-gray-900">项目列表</Link>
+        <div className="border-b border-gray-200 px-6 py-3">
+          <div className="flex items-center gap-2 text-sm text-gray-500 mb-1">
+            <Link href="/dashboard" className="hover:text-gray-900 transition">项目列表</Link>
             <span className="text-gray-300">/</span>
-            <Link href={`/project/${projectId}`} className="hover:text-gray-900">概览</Link>
-            <span className="text-gray-300">/</span>
-            <Link href={`/project/${projectId}/chapters`} className="hover:text-gray-900">正文</Link>
+            <Link href={`/project/${projectId}`} className="hover:text-gray-900 transition">概览</Link>
             <span className="text-gray-300">/</span>
             <span className="text-gray-900 font-medium">{chapter?.title || '章节'}</span>
-            {isFinalized && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">已定稿</span>}
+            {isFinalized && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full ml-1">已定稿</span>}
           </div>
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-xl font-bold">{chapter?.title || '加载中...'}</h1>
+              <h1 className="text-lg font-bold">{chapter?.title || '加载中...'}</h1>
               {volume && unit && (
-                <p className="text-xs text-gray-400 mt-0.5">{volume.title} / {unit.title}</p>
+                <p className="text-xs text-gray-400">{volume.title} / {unit.title}</p>
               )}
             </div>
             <div className="flex items-center gap-2">
+              <button onClick={() => setExperiencePanelOpen(true)}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:border-gray-500 transition">
+                经验管理
+              </button>
               <button onClick={() => setWritingStyleOpen(true)}
                 className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:border-gray-500 transition">
                 写作风格
@@ -302,35 +306,42 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
                 版本管理
               </button>
               <button onClick={() => setChatOpen(true)}
-                className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition">
+                className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition">
                 AI 创作
               </button>
             </div>
           </div>
         </div>
 
-        {/* Tab Bar */}
-        <div className="bg-white border-b border-gray-200 px-6">
-          <div className="flex gap-1">
-            {tabs.map(tab => (
+        {/* Step Bar — 居中大按钮 */}
+        <div className="border-b border-gray-200">
+          <div className="flex items-center justify-center gap-0 py-0">
+            {tabs.map((tab, idx) => (
               <button key={tab.key} onClick={() => setActiveTab(tab.key)}
-                className={`px-4 py-3 text-sm font-medium border-b-2 transition ${
+                className={`flex items-center gap-2 px-8 py-3.5 text-sm font-medium border-b-2 transition ${
                   activeTab === tab.key
-                    ? 'border-gray-900 text-gray-900'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    ? 'border-gray-900 text-gray-900 bg-gray-50/50'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
                 }`}>
-                <span className="mr-1.5">{tab.icon}</span>
+                <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                  activeTab === tab.key
+                    ? 'bg-gray-900 text-white'
+                    : 'bg-gray-200 text-gray-500'
+                }`}>{tab.step}</span>
                 {tab.label}
+                {idx < tabs.length - 1 && (
+                  <span className="text-gray-300 text-xs ml-4 hidden md:inline">→</span>
+                )}
               </button>
             ))}
           </div>
         </div>
 
-        {/* Tab Content */}
-        <div className="flex-1 p-6 overflow-y-auto">
+        {/* Tab Content — full-width, no gray margins */}
+        <div className="flex-1 overflow-y-auto">
           {/* Tab: 任务书 */}
           {activeTab === 'brief' && (
-            <div className="max-w-3xl mx-auto">
+            <div className="max-w-4xl mx-auto px-6 py-6">
               <div className="bg-white rounded-xl border border-gray-200 p-6">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="font-semibold">创作任务书</h2>
@@ -353,36 +364,40 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
                       </div>
                     )}
                     {!briefConfirmed && (
-                      <button onClick={() => setBriefConfirmed(true)}
+                      <button onClick={() => {
+                        setBriefConfirmed(true);
+                        setActiveTab('draft');
+                        setChatOpen(true);
+                      }}
                         className="w-full mt-4 py-2.5 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition">
                         确认任务书，开始创作
                       </button>
                     )}
                     {briefConfirmed && (
-                      <p className="text-xs text-green-600 mt-3">任务书已确认，切换到"草稿"tab开始撰写正文</p>
+                      <p className="text-xs text-green-600 mt-3">任务书已确认，进入下一步开始创作</p>
                     )}
                   </div>
                 )}
               </div>
 
-              {/* AI 构思入口 */}
+              {/* 创作风格入口 */}
               {!briefConfirmed && (
                 <div className="mt-4 bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl border border-amber-200 p-5">
-                  <p className="text-sm font-medium text-amber-800 mb-2">还没有创作思路？</p>
-                  <p className="text-xs text-amber-600 mb-3">让 AI 根据你的设定和大纲，生成本章的任务书和草稿。</p>
-                  <button onClick={() => setChatOpen(true)}
+                  <p className="text-sm font-medium text-amber-800 mb-2">写作风格提示</p>
+                  <p className="text-xs text-amber-600 mb-3">在开始创作前，建议先设置写作风格（节奏、视角、语气等），让 AI 生成的内容更符合你的预期。</p>
+                  <button onClick={() => setWritingStyleOpen(true)}
                     className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 transition">
-                    AI 构思
+                    设置写作风格
                   </button>
                 </div>
               )}
             </div>
           )}
 
-          {/* Tab: 草稿编辑器 */}
+          {/* Tab: 开始创作 */}
           {activeTab === 'draft' && (
-            <div className="max-w-4xl mx-auto">
-              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mb-4">
+            <div className="h-full flex flex-col">
+              <div className="flex-1 flex flex-col border-b border-gray-200">
                 <StoryEditor
                   content={editorContent}
                   onChange={setEditorContent}
@@ -390,23 +405,23 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
                   editable={!isFinalized}
                 />
               </div>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between px-6 py-3">
                 <div className="flex items-center gap-3 text-sm text-gray-500">
                   <span>字数：{wordCount}</span>
                   {isFinalized && <span className="text-green-600 font-medium">已定稿，不可编辑</span>}
                 </div>
-                <div className="flex items-center gap-2">
-                  {saveStatus === 'saved' && <span className="text-xs text-green-600">已保存</span>}
+                <div className="flex items-center gap-3">
+                  {saveStatus === 'saved' && <span className="text-xs text-green-600 font-medium">已保存</span>}
                   {saveStatus === 'saving' && <span className="text-xs text-gray-400">保存中...</span>}
                   {!isFinalized && (
                     <>
-                      <button onClick={handleSaveDraft} disabled={saveStatus === 'saving' || !editorContent.trim()}
-                        className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition disabled:opacity-50">
-                        保存草稿
-                      </button>
                       <button onClick={() => setChatOpen(true)}
-                        className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition">
+                        className="px-5 py-2.5 border-2 border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition">
                         AI 生成
+                      </button>
+                      <button onClick={handleSaveDraft} disabled={saveStatus === 'saving' || !editorContent.trim()}
+                        className="px-6 py-2.5 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition disabled:opacity-50">
+                        保存草稿
                       </button>
                     </>
                   )}
@@ -417,7 +432,7 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
 
           {/* Tab: AI 自检 */}
           {activeTab === 'checklist' && (
-            <div className="max-w-3xl mx-auto space-y-4">
+            <div className="max-w-4xl mx-auto px-6 py-6 space-y-4">
               {!selfCheckReport && !selfCheckGenerating && (
                 <div className="bg-white rounded-xl border border-gray-200 p-6">
                   <h2 className="font-semibold mb-4">AI 自检报告</h2>
@@ -470,6 +485,13 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
         onLoadVersion={handleLoadVersion}
       />
 
+      {/* Experience Panel (slide-out) */}
+      <ExperiencePanel
+        open={experiencePanelOpen}
+        onClose={() => setExperiencePanelOpen(false)}
+        projectId={projectId}
+      />
+
       {/* Writing Style Panel (modal) */}
       <WritingStylePanel
         open={writingStyleOpen}
@@ -485,6 +507,7 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
         conversationType="chapter"
         roleKey="writer"
         title="AI 创作"
+        targetEntityId={chapterId}
         taskBrief={editableBrief}
         onSaveDraft={(content) => {
           setEditorContent(content);

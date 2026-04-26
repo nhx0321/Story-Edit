@@ -7,18 +7,14 @@ import { useAuthStore } from '@/lib/auth-store';
 import { trpc } from '@/lib/trpc';
 import { FeedbackDialog } from '@/components/feedback-dialog';
 
-function getProjectHref(pathname: string): string {
+function NavItems({ pathname, mounted, isAdmin, latestProjectId }: { pathname: string; mounted: boolean; isAdmin: boolean; latestProjectId?: string }) {
   // 如果在 /project/[id] 路径下，指向当前项目概览页
   const match = pathname.match(/^\/project\/([^/]+)/);
-  if (match) {
-    return `/project/${match[1]}`;
-  }
-  // 其他页面指向项目列表
-  return '/dashboard';
-}
-
-function NavItems({ pathname, mounted, isAdmin }: { pathname: string; mounted: boolean; isAdmin: boolean }) {
-  const projectHref = getProjectHref(pathname);
+  const projectHref = match
+    ? `/project/${match[1]}`
+    : latestProjectId
+      ? `/project/${latestProjectId}`
+      : '/dashboard';
   const navItems = [
     { href: '/ai-config', label: 'AI 配置' },
     { href: projectHref, label: '项目', projectAware: true },
@@ -74,6 +70,14 @@ export function Navbar() {
 
   const { data: me } = trpc.userAccount.getProfile.useQuery(undefined, { enabled: !!user });
 
+  // 项目列表（用于项目按钮指向最近项目）
+  const { data: projects } = trpc.project.list.useQuery(undefined, {
+    enabled: !!user,
+  });
+  const latestProjectId = projects && projects.length > 0
+    ? projects.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0]?.id
+    : undefined;
+
   // VIP 订阅状态
   const { data: billingStatus } = trpc.billing.getStatus.useQuery(undefined, {
     enabled: !!user,
@@ -119,7 +123,7 @@ export function Navbar() {
           <div className="flex items-center gap-6">
             <Link href="/" className="font-bold text-lg text-gray-900">Story Edit</Link>
             <div className="flex items-center gap-1">
-              <NavItems pathname={pathname} mounted={mounted} isAdmin={isAdmin} />
+              <NavItems pathname={pathname} mounted={mounted} isAdmin={isAdmin} latestProjectId={latestProjectId} />
             </div>
           </div>
 

@@ -1629,12 +1629,9 @@ export function ChatPanel({
                   </div>
                 </div>
               )}
-              {/* writing 阶段：撰写中指示 */}
+              {/* writing 阶段：撰写中指示（滚动随机提示） */}
               {writerPhase === 'writing' && (
-                <div className="flex items-center gap-2 py-1">
-                  <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse" />
-                  <span className="text-xs text-gray-400">AI 撰写中...</span>
-                </div>
+                <WritingStatus />
               )}
               {/* post_write: 撰写完毕按钮 */}
               {writerPhase === 'post_write' && !showWriterInput && (
@@ -1993,4 +1990,47 @@ function WorkflowStatusBar({
 
   // 默认：无状态栏
   return null;
+}
+
+// ========== AI 撰写中滚动状态提示 ==========
+const WRITING_TIPS = [
+  '正在构思开头...',
+  '组织人物对话...',
+  '描写场景细节...',
+  '推进剧情发展...',
+  '调整节奏结构...',
+  '润色文字表达...',
+  '检查设定一致性...',
+  '埋设伏笔...',
+  '营造氛围...',
+  '打磨人物心理...',
+];
+
+function WritingStatus() {
+  const [tipIndex, setTipIndex] = useState(0);
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setVisible(false);
+      setTimeout(() => {
+        setTipIndex(prev => (prev + 1) % WRITING_TIPS.length);
+        setVisible(true);
+      }, 300);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="flex items-center gap-2 py-2 px-1">
+      <span className="flex gap-0.5">
+        <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+        <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+        <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+      </span>
+      <span className={`text-xs text-gray-400 transition-opacity duration-300 ${visible ? 'opacity-100' : 'opacity-0'}`}>
+        {WRITING_TIPS[tipIndex]}
+      </span>
+    </div>
+  );
 }

@@ -498,14 +498,24 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
         <div className="flex items-center justify-between mt-4 mb-6">
           <h1 className="text-2xl font-bold">大纲</h1>
           <div className="flex gap-2">
-            {/* AI 构思 — 黑底白字，最左侧 */}
+            {/* 导入文档 — 最左侧 */}
+            <button onClick={() => setImportDialogOpen(true)}
+              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition">
+              导入文档
+            </button>
+            {/* AI 构思 — 黑底白字 */}
             <button onClick={() => setChatOpen(true)}
               className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition">
               AI 构思
             </button>
             <button onClick={() => openDialog('volume')}
-              className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition">
+              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:border-gray-500 transition">
               + 新建卷
+            </button>
+            {/* 补充设定词条 */}
+            <button onClick={handleSupplementSettings}
+              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition">
+              补充设定词条
             </button>
             <button
               onClick={() => !isPaidTemplateImport && setShowExportModal(true)}
@@ -517,16 +527,6 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
                   : 'border-gray-300 hover:border-gray-500'
               }`}>
               导出大纲
-            </button>
-            {/* 导入文档 — 新按钮 */}
-            <button onClick={() => setImportDialogOpen(true)}
-              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition">
-              导入文档
-            </button>
-            {/* 补充设定词条 — 新按钮 */}
-            <button onClick={handleSupplementSettings}
-              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition">
-              补充设定词条
             </button>
             <button onClick={() => setShowDeleted(!showDeleted)}
               className={`px-4 py-2 border rounded-lg text-sm font-medium transition ${showDeleted ? 'border-orange-300 text-orange-600 bg-orange-50' : 'border-gray-300 text-gray-600 hover:border-gray-500'}`}>
@@ -718,8 +718,13 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
           setChatContext(null);
         }}
         onNavigateToChapter={() => {
-          // 跳转到第一个章节的正文创作页面
-          window.location.href = `/project/${projectId}/chapters`;
+          // 跳转到正文创作工作台（最近的章节或第一个章节）
+          const firstCh = outlineTree?.[0]?.units?.[0]?.chapters?.[0];
+          if (firstCh) {
+            window.location.href = `/project/${projectId}/chapter/${firstCh.id}`;
+          } else {
+            window.location.href = `/project/${projectId}/chapters`;
+          }
         }}
         onActionConfirmed={(type, entity: unknown) => {
           utils.project.listVolumes.invalidate({ projectId });
@@ -760,7 +765,12 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
           setChatContext(null);
         }}
         onNavigateToChapter={() => {
-          window.location.href = `/project/${projectId}/chapters`;
+          const firstCh = outlineTree?.[0]?.units?.[0]?.chapters?.[0];
+          if (firstCh) {
+            window.location.href = `/project/${projectId}/chapter/${firstCh.id}`;
+          } else {
+            window.location.href = `/project/${projectId}/chapters`;
+          }
         }}
         onActionConfirmed={(type, entity: unknown) => {
           utils.project.listVolumes.invalidate({ projectId });

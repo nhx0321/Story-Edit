@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { trpc } from '@/lib/trpc';
+import { streamAiChat } from '@/lib/ai-stream';
 
 interface L0Entry {
   level: string;
@@ -58,6 +59,9 @@ export function FinalizePanel({
     { enabled: true },
   );
 
+  // AI 模型配置（用于 AI 分析）
+  const { data: configs } = trpc.ai.listConfigs.useQuery(undefined, { enabled: true });
+
   const [showL0L4, setShowL0L4] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [activeLevel, setActiveLevel] = useState<string | null>(null);
@@ -95,82 +99,61 @@ export function FinalizePanel({
   }, [existingLevels]);
 
   const handleGenerateL0L4 = async () => {
+    if (!configs || configs.length === 0) {
+      alert('请先配置 AI 模型');
+      return;
+    }
     setGenerating(true);
     setShowL0L4(true);
-    setActiveLevel('L3');
 
-    // Simulate AI analysis - in production would use real AI streaming
+    // 使用 AI 流式生成 L3 章节分析
     try {
-      // First set L3 (chapter analysis) from the content
-      const l3Analysis = generateL3Analysis(editorContent);
-      setL3Content(l3Analysis);
-
-      // Then L4 (advanced analysis)
-      setActiveLevel('L4');
-      const l4Analysis = generateL4Analysis(editorContent);
-      setL4Content(l4Analysis);
-
-      // Then L0 categories
-      setActiveLevel('L0');
-      const l0Data: Record<string, string> = {};
-      for (const cat of L0_CATEGORIES) {
-        l0Data[cat.key] = l0Entries[cat.key] || '';
+      setActiveLevel('L3');
+      const l3SysMsg = { role: 'system' as const, content: '你是一名专业的小说章节分析专家。分析以下章节正文，输出 L3 章节分析报告，包括：基本信息（字数、段落数、对话密度）、剧情进展（主线推进、新角色登场、冲突密度）、写作质量评估。保持简洁。' };
+      const l3UserMsg = { role: 'user' as const, content: `请分析以下章节正文：\n\n${editorContent.slice(0, 6000)}` };
+      let l3Result = '';
+      for await (const chunk of streamAiChat({
+        configId: configs[0].id,
+        messages: [l3SysMsg, l3UserMsg],
+        projectId,
+      })) {
+        if (chunk.content) {
+          l3Result += chunk.content;
+          setL3Content(l3Result);
+        }
+        if (chunk.error) break;
       }
-      setL0Entries(prev => ({ ...prev, ...l0Data }));
 
-      // Then L1 categories
+      // 生成 L4 高级分析
+      setActiveLevel('L4');
+      const l4SysMsg = { role: 'system' as const, content: '你是一名资深文学编辑。对以下章节进行高级分析，包括：读者体验预测（代入感、情感共鸣）、市场适配度、具体改进建议。保持简洁，可操作。' };
+      const l4UserMsg = { role: 'user' as const, content: `请对以下章节进行高级分析：\n\n${editorContent.slice(0, 6000)}` };
+      let l4Result = '';
+      for await (const chunk of streamAiChat({
+        configId: configs[0].id,
+        messages: [l4SysMsg, l4UserMsg],
+        projectId,
+      })) {
+        if (chunk.content) {
+          l4Result += chunk.content;
+          setL4Content(l4Result);
+        }
+        if (chunk.error) break;
+      }
+
+      // L0/L1/L2 保持已有内容不变（用户可自定义编辑）
+      setActiveLevel('L0');
       setActiveLevel('L1');
-
-      // Finally L2
       setActiveLevel('L2');
     } catch {
-      // Error handling
+      setL3Content('章节分析失败，请重试');
+      setL4Content('高级分析失败，请重试');
     }
     setGenerating(false);
     setActiveLevel(null);
   };
 
-  // Simple content analysis (placeholder - in production use AI)
-  const generateL3Analysis = (content: string): string => {
-    const wordCount = content.replace(/\s/g, '').length;
-    const paragraphs = content.split('\n\n').filter(p => p.trim()).length;
-    const dialogues = (content.match(/["「『]/g) || []).length;
-
-    return [
-      `## 本章基本信息`,
-      `- 字数：${wordCount}`,
-      `- 段落数：${paragraphs}`,
-      `- 对话密度：${dialogues} 处`,
-      ``,
-      `## 剧情进展`,
-      `- 主线推进：${content.length > 500 ? '有实质推进' : '较少'}`,
-      `- 新角色登场：${content.includes('介绍') || content.includes('出现') ? '有' : '无'}`,
-      `- 冲突密度：${content.includes('冲突') || content.includes('对抗') ? '中等' : '较低'}`,
-      ``,
-      `## 写作质量`,
-      `- 句式多样性：${content.includes('。') ? '丰富' : '需要提升'}`,
-      `- 描写细节：${content.length > 1000 ? '充分' : '可增加细节描写'}`,
-    ].join('\n');
-  };
-
-  const generateL4Analysis = (content: string): string => {
-    return [
-      `## 高级分析`,
-      ``,
-      `### 读者体验预测`,
-      `- 代入感：${content.includes('感觉') || content.includes('觉得') ? '较好' : '需要增强'}`,
-      `- 情感共鸣：${content.includes('感动') || content.includes('愤怒') || content.includes('喜悦') ? '有情感触发点' : '情感描写偏少'}`,
-      ``,
-      `### 市场适配度`,
-      `- 类型符合度：与项目设定一致`,
-      `- 节奏适配：${content.length > 2000 ? '内容充实' : '篇幅偏短'}`,
-      ``,
-      `### 改进建议`,
-      `- 可以在关键情节增加更多感官描写`,
-      `- 对话可增加潜台词和个性差异`,
-    ].join('\n');
-  };
-
+  // Save analysis results to memory entries (L0-L4)
   const handleSaveAnalysis = async () => {
     setSaving(true);
     try {
