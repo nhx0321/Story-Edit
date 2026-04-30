@@ -1,0 +1,8 @@
+{
+  "build": {
+    "artifact": {
+      "assetsDir": ".next/static",
+      "serverDir": ".next/server"
+    }
+  }
+}
