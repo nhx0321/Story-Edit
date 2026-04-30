@@ -18,6 +18,8 @@ export interface TaskBriefOptions {
   isPremium: boolean;
   includeRedLines: boolean;
   includeStateSnapshot: boolean;
+  /** L0-L3 创作经验文本（供 AI 创作时参考） */
+  experienceText?: string;
 }
 
 // 将任务书转为 AI 消息
@@ -31,6 +33,9 @@ export function taskBriefToMessages(brief: TaskBrief, rolePrompt: string, option
   }
   if (options.isPremium && options.includeRedLines && brief.redLines.length > 0) {
     systemContent += `\n\n## 创作红线（绝对不可违反）\n${brief.redLines.map((r, i) => `${i + 1}. ${r}`).join('\n')}`;
+  }
+  if (options.experienceText) {
+    systemContent += `\n\n## 创作经验（从历史创作中提炼）\n${options.experienceText}`;
   }
   messages.push({ role: 'system', content: systemContent });
 

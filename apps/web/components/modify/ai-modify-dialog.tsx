@@ -314,7 +314,7 @@ ${suggestions}
               </button>
               <button onClick={handleApplyModifications}
                 className="flex-1 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition">
-                应用修改
+                应用全部修改
               </button>
             </>
           )}

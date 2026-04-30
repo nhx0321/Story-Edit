@@ -1,4 +1,4 @@
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, TabStopPosition, TabStopType, SectionType, PageBreak } from 'docx';
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, PageBreak } from 'docx';
 import { saveAs } from 'file-saver';
 
 interface ExportChapter {
@@ -23,7 +23,7 @@ interface ExportVolume {
   units: ExportUnit[];
 }
 
-interface ExportData {
+export interface ExportData {
   projectTitle: string;
   projectSynopsis?: string | null;
   volumes: ExportVolume[];
@@ -31,6 +31,8 @@ interface ExportData {
   /** 故事脉络（全书故事脉络总纲） */
   storyNarrative?: { id: string; title: string; content: string } | null;
 }
+
+export type ExportKind = 'outline' | 'content' | 'full';
 
 // 构建文件夹路径文本（用于 docx 中的目录结构展示）
 function buildFolderStructure(data: ExportData): string {
@@ -57,14 +59,26 @@ function buildFolderStructure(data: ExportData): string {
   return result;
 }
 
-// 生成全书介绍文本
+// 生成全书介绍文本（详细版，含各级梗概、看点、主旨、推荐理由）
 function generateProjectIntroduction(data: ExportData): string {
-  let intro = `# ${data.projectTitle}\n\n`;
+  const divider = '━'.repeat(40);
+  const thinDivider = '─'.repeat(30);
+  let intro = '';
+
+  // ===== 封面标题 =====
+  intro += `${divider}\n`;
+  intro += `    ${data.projectTitle}\n`;
+  intro += `    全书梗概与导读\n`;
+  intro += `${divider}\n\n`;
+
+  // ===== 全书介绍 =====
   if (data.projectSynopsis) {
-    intro += `## 全书介绍\n${data.projectSynopsis}\n\n`;
+    intro += `【全书介绍】\n\n`;
+    intro += `${data.projectSynopsis}\n\n`;
+    intro += `${thinDivider}\n\n`;
   }
 
-  // 统计信息
+  // ===== 统计信息 =====
   let totalChapters = 0;
   let finalizedChapters = 0;
   for (const vol of data.volumes) {
@@ -75,21 +89,94 @@ function generateProjectIntroduction(data: ExportData): string {
       }
     }
   }
-  intro += `## 统计信息\n`;
-  intro += `- 卷数：${data.volumes.length}\n`;
-  intro += `- 总章节数：${totalChapters}\n`;
-  intro += `- 已定稿章节：${finalizedChapters}\n`;
-  intro += `- 待创作章节：${totalChapters - finalizedChapters}\n\n`;
+  intro += `【全书概况】\n\n`;
+  intro += `  全书共 ${data.volumes.length} 卷，${totalChapters} 章\n`;
+  intro += `  已定稿：${finalizedChapters} 章`;
+  if (totalChapters > finalizedChapters) {
+    intro += `  |  待创作：${totalChapters - finalizedChapters} 章`;
+  }
+  intro += `\n\n`;
 
-  // 各卷梗概
-  for (const vol of data.volumes) {
-    intro += `### ${vol.title}\n`;
-    if (vol.synopsis) {
-      intro += `${vol.synopsis}\n\n`;
+  // ===== 核心看点 =====
+  const highlights = extractHighlights(data);
+  if (highlights.length > 0) {
+    intro += `【核心看点】\n\n`;
+    highlights.forEach((h, i) => {
+      intro += `  ${i + 1}. ${h}\n`;
+    });
+    intro += `\n`;
+  }
+
+  // ===== 全书主旨 =====
+  const narrative = data.storyNarrative?.content || '';
+  if (narrative) {
+    intro += `【全书主旨】\n\n`;
+    // 从故事脉络中提取主旨
+    const themeMatch = narrative.match(/(?:主题|主旨|核心思想)[：:]\s*([^\n]+)/);
+    if (themeMatch) {
+      intro += `  ${themeMatch[1].trim()}\n\n`;
     } else {
-      intro += `（暂无梗概）\n\n`;
+      // 取脉络前200字作为主旨概述
+      intro += `  ${narrative.slice(0, 200).trim()}...\n\n`;
     }
   }
+
+  // ===== 推荐理由 =====
+  const recs = generateRecommendations(data);
+  if (recs.length > 0) {
+    intro += `【推荐理由】\n\n`;
+    recs.forEach(r => {
+      intro += `  ${r}\n`;
+    });
+    intro += `\n`;
+  }
+
+  intro += `${divider}\n`;
+  intro += `    详细梗概\n`;
+  intro += `${divider}\n\n`;
+
+  // ===== 各卷详细梗概 =====
+  for (let vi = 0; vi < data.volumes.length; vi++) {
+    const vol = data.volumes[vi];
+    const volNum = vi + 1;
+    intro += `${'═'.repeat(35)}\n`;
+    intro += `  第${volNum}卷  ${vol.title}\n`;
+    intro += `${'═'.repeat(35)}\n\n`;
+
+    if (vol.synopsis) {
+      intro += `【卷梗概】\n${vol.synopsis}\n\n`;
+    }
+
+    for (let ui = 0; ui < vol.units.length; ui++) {
+      const unit = vol.units[ui];
+      const unitNum = ui + 1;
+      intro += `  ${thinDivider}\n`;
+      intro += `  第${unitNum}单元  ${unit.title}\n`;
+      intro += `  ${thinDivider}\n\n`;
+
+      if (unit.synopsis) {
+        intro += `  【单元梗概】\n  ${unit.synopsis}\n\n`;
+      }
+
+      // 章节列表
+      for (let ci = 0; ci < unit.chapters.length; ci++) {
+        const ch = unit.chapters[ci];
+        const chNum = ci + 1;
+        const statusLabel = ch.status === 'final' ? '✓ 已定稿' : ch.status === 'draft' ? '◎ 草稿' : '○ 待创作';
+        intro += `    第${volNum}卷第${unitNum}单元第${chNum}章：${ch.title}  [${statusLabel}]\n`;
+        if (ch.synopsis) {
+          intro += `      ${ch.synopsis.replace(/\n/g, '\n      ')}\n`;
+        }
+        intro += `\n`;
+      }
+    }
+    intro += `\n`;
+  }
+
+  // ===== 尾部 =====
+  intro += `${divider}\n`;
+  intro += `  导出时间：${new Date().toLocaleString('zh-CN')}\n`;
+  intro += `${divider}\n`;
 
   return intro;
 }
@@ -432,7 +519,87 @@ export async function exportOutlineDocx(data: ExportData, options?: { includeCon
   });
 
   const blob = await Packer.toBlob(doc);
-  saveAs(blob, `${data.projectTitle}_大纲.docx`);
+  saveAs(blob, `${data.projectTitle}_${includeContent ? '完整导出' : '大纲'}.docx`);
+}
+
+export async function exportContentDocx(data: ExportData) {
+  const children: Paragraph[] = [];
+
+  children.push(
+    new Paragraph({
+      text: `${data.projectTitle} 正文导出`,
+      heading: HeadingLevel.TITLE,
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 400 },
+    })
+  );
+
+  let exportedCount = 0;
+
+  for (const vol of data.volumes) {
+    const chaptersWithContent = vol.units.flatMap(unit =>
+      unit.chapters
+        .filter(ch => ch.finalContent)
+        .map(ch => ({ unitTitle: unit.title, chapter: ch }))
+    );
+
+    if (chaptersWithContent.length === 0) continue;
+
+    children.push(
+      new Paragraph({
+        text: vol.title,
+        heading: HeadingLevel.HEADING_1,
+        spacing: { before: 400, after: 200 },
+      })
+    );
+
+    for (const { unitTitle, chapter } of chaptersWithContent) {
+      exportedCount += 1;
+      children.push(
+        new Paragraph({
+          text: chapter.title,
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 240, after: 80 },
+        })
+      );
+      children.push(
+        new Paragraph({
+          children: [new TextRun(`所属：${vol.title} / ${unitTitle}`)],
+          spacing: { after: 120 },
+        })
+      );
+
+      const plainText = htmlToPlainText(chapter.finalContent || '');
+      const paragraphs = plainText.split(/\n\n+/).filter(p => p.trim());
+      for (const para of paragraphs) {
+        children.push(
+          new Paragraph({
+            children: [new TextRun(para.trim())],
+            spacing: { after: 120 },
+          })
+        );
+      }
+    }
+  }
+
+  if (exportedCount === 0) {
+    children.push(
+      new Paragraph({
+        children: [new TextRun('当前没有可导出的定稿正文，请先完成章节定稿。')],
+        spacing: { after: 120 },
+      })
+    );
+  }
+
+  const doc = new Document({
+    sections: [{
+      properties: {},
+      children,
+    }],
+  });
+
+  const blob = await Packer.toBlob(doc);
+  saveAs(blob, `${data.projectTitle}_正文.docx`);
 }
 
 // 过滤数据：根据选中的章节
@@ -456,20 +623,208 @@ function filterBySelectedChapters(data: ExportData): ExportData {
 }
 
 // 主导出函数
-export async function exportOutline(data: ExportData, format: 'docx' | 'pdf', options?: { includeContent?: boolean }) {
+export async function exportOutline(data: ExportData, format: 'docx' | 'pdf' | 'folder', options?: { includeContent?: boolean; kind?: ExportKind }) {
   const filteredData = filterBySelectedChapters(data);
+  const kind = options?.kind ?? (options?.includeContent ? 'full' : 'outline');
 
   if (filteredData.volumes.length === 0) {
     alert('没有可导出的内容');
     return false;
   }
 
+  if (format === 'folder') {
+    if (kind === 'outline') {
+      alert('仅大纲导出请使用 DOCX 格式');
+      return false;
+    }
+    return exportToFolder(filteredData, kind);
+  }
+
   if (format === 'docx') {
-    await exportOutlineDocx(filteredData, options);
+    if (kind === 'content') {
+      await exportContentDocx(filteredData);
+      return true;
+    }
+    await exportOutlineDocx(filteredData, { includeContent: kind === 'full' });
     return true;
   }
 
-  // PDF 导出（VIP 功能，使用浏览器打印）
+  // PDF 导出尚未完成，当前先引导用户使用 DOCX
   alert('PDF 导出功能开发中，请使用 DOCX 格式导出后转换为 PDF');
   return false;
+}
+
+// 将 HTML 内容转为纯文本
+function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>\s*<p[^>]*>/gi, '\n\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .trim();
+}
+
+// 清理文件名中的非法字符
+function sanitizeFileName(name: string): string {
+  return name.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, ' ').trim();
+}
+
+// 导出到文件夹（使用 File System Access API）
+async function exportToFolder(data: ExportData, kind: ExportKind = 'full'): Promise<boolean> {
+  if (!('showDirectoryPicker' in window)) {
+    alert('当前浏览器不支持文件夹导出，请使用 Chrome 或 Edge 浏览器');
+    return false;
+  }
+
+  try {
+    const dirHandle = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
+
+    // 1. 创建本书简介文档（docx）
+    const introContent = generateProjectIntroduction(data);
+    const introDoc = new Document({
+      sections: [{
+        properties: {},
+        children: introContent.split('\n').map(line => new Paragraph({
+          children: [new TextRun(line)],
+          spacing: { after: 60 },
+        })),
+      }],
+    });
+    const introBlob = await Packer.toBlob(introDoc);
+    const introFile = await dirHandle.getFileHandle(
+      sanitizeFileName(`${data.projectTitle}_简介.docx`), { create: true }
+    );
+    const introWritable = await introFile.createWritable();
+    await introWritable.write(introBlob);
+    await introWritable.close();
+
+    if (kind === 'content') {
+      // 仅正文导出：跳过卷/单元梗概文件，仅保留章节正文结构
+    }
+
+    // 2. 按卷、单元建立文件夹结构，导出章节正文
+    for (let vi = 0; vi < data.volumes.length; vi++) {
+      const vol = data.volumes[vi];
+      const volNum = vi + 1;
+      const volFolderName = sanitizeFileName(`第${volNum}卷 ${vol.title}`);
+      const volDir = await dirHandle.getDirectoryHandle(volFolderName, { create: true });
+
+      // 卷梗概文件
+      if (kind !== 'content' && vol.synopsis) {
+        const volDoc = new Document({
+          sections: [{
+            properties: {},
+            children: [
+              new Paragraph({ text: vol.title, heading: HeadingLevel.HEADING_1, spacing: { after: 200 } }),
+              ...vol.synopsis.split('\n').map(line => new Paragraph({
+                children: [new TextRun(line)],
+                spacing: { after: 120 },
+              })),
+            ],
+          }],
+        });
+        const volBlob = await Packer.toBlob(volDoc);
+        const volSynopsisFile = await volDir.getFileHandle('卷梗概.docx', { create: true });
+        const w = await volSynopsisFile.createWritable();
+        await w.write(volBlob);
+        await w.close();
+      }
+
+      for (let ui = 0; ui < vol.units.length; ui++) {
+        const unit = vol.units[ui];
+        const unitNum = ui + 1;
+        const unitFolderName = sanitizeFileName(`第${unitNum}单元 ${unit.title}`);
+        const unitDir = await volDir.getDirectoryHandle(unitFolderName, { create: true });
+
+        // 单元梗概文件
+        if (kind !== 'content' && unit.synopsis) {
+          const unitDoc = new Document({
+            sections: [{
+              properties: {},
+              children: [
+                new Paragraph({ text: unit.title, heading: HeadingLevel.HEADING_1, spacing: { after: 200 } }),
+                ...unit.synopsis.split('\n').map(line => new Paragraph({
+                  children: [new TextRun(line)],
+                  spacing: { after: 120 },
+                })),
+              ],
+            }],
+          });
+          const unitBlob = await Packer.toBlob(unitDoc);
+          const unitSynopsisFile = await unitDir.getFileHandle('单元梗概.docx', { create: true });
+          const w = await unitSynopsisFile.createWritable();
+          await w.write(unitBlob);
+          await w.close();
+        }
+
+        // 导出章节正文
+        for (let ci = 0; ci < unit.chapters.length; ci++) {
+          const ch = unit.chapters[ci];
+          const chNum = ci + 1;
+          const chFileName = sanitizeFileName(
+            `第${volNum}卷第${unitNum}单元第${chNum}章：${ch.title}.docx`
+          );
+
+          const chChildren: Paragraph[] = [];
+          chChildren.push(new Paragraph({
+            text: `第${volNum}卷第${unitNum}单元第${chNum}章：${ch.title}`,
+            heading: HeadingLevel.HEADING_1,
+            spacing: { after: 200 },
+          }));
+
+          if (ch.synopsis) {
+            chChildren.push(new Paragraph({
+              text: '章节梗概',
+              heading: HeadingLevel.HEADING_2,
+              spacing: { before: 200, after: 100 },
+            }));
+            for (const line of ch.synopsis.split('\n')) {
+              chChildren.push(new Paragraph({
+                children: [new TextRun(line)],
+                spacing: { after: 100 },
+              }));
+            }
+          }
+
+          if (ch.finalContent) {
+            chChildren.push(new Paragraph({
+              text: '正文',
+              heading: HeadingLevel.HEADING_2,
+              spacing: { before: 200, after: 100 },
+            }));
+            const plainText = htmlToPlainText(ch.finalContent);
+            for (const para of plainText.split(/\n\n+/).filter(p => p.trim())) {
+              chChildren.push(new Paragraph({
+                children: [new TextRun(para.trim())],
+                spacing: { after: 120 },
+              }));
+            }
+          } else {
+            chChildren.push(new Paragraph({
+              children: [new TextRun('（未创作）')],
+              spacing: { before: 200, after: 100 },
+            }));
+          }
+
+          const chDoc = new Document({
+            sections: [{ properties: {}, children: chChildren }],
+          });
+          const chBlob = await Packer.toBlob(chDoc);
+          const chFile = await unitDir.getFileHandle(chFileName, { create: true });
+          const w = await chFile.createWritable();
+          await w.write(chBlob);
+          await w.close();
+        }
+      }
+    }
+
+    return true;
+  } catch (e: any) {
+    if (e?.name === 'AbortError') return false; // 用户取消选择
+    throw e;
+  }
 }

@@ -1,9 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { trpc } from '@/lib/trpc';
-import { streamAiChat } from '@/lib/ai-stream';
 
 interface L0Entry {
   level: string;
@@ -43,9 +42,9 @@ const L1_CATEGORIES = [
 ];
 
 const L2_CATEGORIES = [
-  { key: 'foreshadowing', label: '伏笔设置', placeholder: '本章设置的伏笔' },
-  { key: 'cliffhanger', label: '悬念钩子', placeholder: '本章结尾的悬念钩子' },
-  { key: 'pending_threads', label: '待回收线索', placeholder: '需要后续章节回收的线索' },
+  { key: 'writing_gains', label: '写作收获', placeholder: '本章写得好的地方和可复用的技法' },
+  { key: 'improvement', label: '改进方向', placeholder: '本章的不足和下次可改进之处' },
+  { key: 'attention_points', label: '注意事项', placeholder: '创作中需要持续关注的要点' },
 ];
 
 export function FinalizePanel({
@@ -59,26 +58,29 @@ export function FinalizePanel({
     { enabled: true },
   );
 
-  // AI 模型配置（用于 AI 分析）
-  const { data: configs } = trpc.ai.listConfigs.useQuery(undefined, { enabled: true });
-
   const [showL0L4, setShowL0L4] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [activeLevel, setActiveLevel] = useState<string | null>(null);
+  const [isThinkingModel, setIsThinkingModel] = useState(false);
 
   // L0: 项目基础经验
   const [l0Entries, setL0Entries] = useState<Record<string, string>>({});
   // L1: 写作经验
   const [l1Entries, setL1Entries] = useState<Record<string, string>>({});
-  // L2: 伏笔跟踪
+  // L2: 经验总结
   const [l2Entries, setL2Entries] = useState<Record<string, string>>({});
-  // L3: 章节分析
+  // L3: 数值和伏笔
   const [l3Content, setL3Content] = useState('');
   // L4: 高级分析
   const [l4Content, setL4Content] = useState('');
 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+
+  // Analysis persistence state
+  const [currentAnalysisId, setCurrentAnalysisId] = useState<string | null>(null);
+  const [analysisProgress, setAnalysisProgress] = useState(0);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Load existing entries when available
   useEffect(() => {
@@ -98,98 +100,123 @@ export function FinalizePanel({
     }
   }, [existingLevels]);
 
+  // Clean up polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  }, []);
+
+  // Parse combined L0-L4 result from background analysis
+  const parseL0L4Result = (result: string) => {
+    // L0: 创作铁律
+    const l0CatMap: Record<string, string> = { story_core: '故事核心要素', world_rules: '世界规则', character_arc: '角色成长弧', style_guide: '风格指南' };
+    for (const [key, label] of Object.entries(l0CatMap)) {
+      const match = result.match(new RegExp(`【${label}】[\\s\\n]*([^【]*)`));
+      if (match?.[1]?.trim()) setL0Entries(prev => ({ ...prev, [key]: match[1].trim() }));
+    }
+    // L1: 写作偏好
+    const l1CatMap: Record<string, string> = { writing_technique: '写作技巧', pacing_experience: '节奏经验', dialogue_tips: '对话心得' };
+    for (const [key, label] of Object.entries(l1CatMap)) {
+      const match = result.match(new RegExp(`【${label}】[\\s\\n]*([^【]*)`));
+      if (match?.[1]?.trim()) setL1Entries(prev => ({ ...prev, [key]: match[1].trim() }));
+    }
+    // L2: 经验总结
+    const l2CatMap: Record<string, string> = { writing_gains: '写作收获', improvement: '改进方向', attention_points: '注意事项' };
+    for (const [key, label] of Object.entries(l2CatMap)) {
+      const match = result.match(new RegExp(`【${label}】[\\s\\n]*([^【]*)`));
+      if (match?.[1]?.trim()) setL2Entries(prev => ({ ...prev, [key]: match[1].trim() }));
+    }
+    // L3 & L4: extract content between headers
+    const l3Match = result.match(/【L3分析结果】([\s\S]*?)(?=(【L4分析结果】|$))/);
+    if (l3Match?.[1]?.trim()) setL3Content(l3Match[1].trim());
+    const l4Match = result.match(/【L4分析结果】([\s\S]*?)$/);
+    if (l4Match?.[1]?.trim()) setL4Content(l4Match[1].trim());
+    // If no section markers, try level headers
+    if (!l3Match && !l4Match) {
+      const l3BySection = result.match(/【L0分析结果】([\s\S]*?)(?=(【L1分析结果】|$))/);
+      // Extract L3/L4 from labeled sections in combined result
+      const l3Section = result.match(/【角色状态】/);
+      if (l3Section) {
+        // If it has 角色状态 header, likely L3 is inline — extract between L2 and L4 sections
+        const l2End = result.indexOf('L2');
+        const l4Start = result.indexOf('L4');
+        // Keep existing content as fallback
+      }
+      // Fallback: set L3 and L4 to the whole result if nothing parsed
+      if (!result.includes('写作对比')) setL3Content(result);
+    }
+  };
+
+  // Poll analysis status
+  const startPollingL0L4 = useRef((analysisId: string) => {
+    if (pollingRef.current) clearInterval(pollingRef.current);
+    pollingRef.current = setInterval(async () => {
+      try {
+        const status = await utils.client.analysis.getStatus.query({ analysisId });
+        if (status.status === 'completed') {
+          if (pollingRef.current) clearInterval(pollingRef.current);
+          pollingRef.current = null;
+          setGenerating(false);
+          setActiveLevel(null);
+          setAnalysisProgress(100);
+          // Parse and populate L0-L4 entries
+          if (status.result) {
+            parseL0L4Result(status.result);
+          }
+          setShowL0L4(true);
+        } else if (status.status === 'failed') {
+          if (pollingRef.current) clearInterval(pollingRef.current);
+          pollingRef.current = null;
+          setGenerating(false);
+          setActiveLevel(null);
+          setL3Content('分析失败：' + (status.errorMessage || '未知错误'));
+          setL4Content('分析失败：' + (status.errorMessage || '未知错误'));
+          setShowL0L4(true);
+        } else if (status.status === 'processing') {
+          setAnalysisProgress(status.progress || 0);
+          // Update active level from metadata (parallel or serial)
+          const meta = status.metadata as Record<string, unknown> | null;
+          if (meta) {
+            if (meta.mode === 'parallel' && Array.isArray(meta.completed_levels)) {
+              const count = (meta.completed_levels as string[]).length;
+              setActiveLevel(`parallel:${count}`);
+            } else if ('current_level' in meta) {
+              const level = meta.current_level as string;
+              if (level && level !== 'done') setActiveLevel(level);
+            }
+          }
+        }
+      } catch {
+        // Ignore polling errors
+      }
+    }, 2000);
+  }).current;
+
   const handleGenerateL0L4 = async () => {
-    if (!configs || configs.length === 0) {
-      alert('请先配置 AI 模型');
+    if (!editorContent) {
+      alert('暂无正文内容');
       return;
     }
     setGenerating(true);
     setShowL0L4(true);
-
     try {
-      // ─── L0: 创作铁律 — 本项目必须做和不能做的事项（每章创作前必读） ───
-      setActiveLevel('L0');
-      const l0SysMsg = { role: 'system' as const, content: '你是一名资深文学编辑，严格按以下四类输出本章的创作铁律。每个类别用【】标题开头，内容1-2句话。\n\n【故事核心要素】故事类型、核心冲突、主线走向的必须/禁止规则\n【世界规则】世界观核心规则、力量体系基础的必须/禁止规则\n【角色成长弧】主角核心成长线、关键转折的必须/禁止规则\n【风格指南】写作风格、节奏特点的必须/禁止规则' };
-      const l0UserMsg = { role: 'user' as const, content: `分析以下章节正文，按四类输出创作铁律：\n\n${editorContent.slice(0, 5000)}` };
-      let l0FullResult = '';
-      for await (const chunk of streamAiChat({
-        configId: configs[0].id, messages: [l0SysMsg, l0UserMsg], projectId,
-      })) {
-        if (chunk.content) { l0FullResult += chunk.content; }
-        if (chunk.error) break;
-      }
-      // 解析 L0 四类内容
-      const l0CatMap: Record<string, string> = { story_core: '故事核心要素', world_rules: '世界规则', character_arc: '角色成长弧', style_guide: '风格指南' };
-      for (const [key, label] of Object.entries(l0CatMap)) {
-        const match = l0FullResult.match(new RegExp(`【${label}】[\\s\\n]*([^【]*)`));
-        if (match?.[1]?.trim()) setL0Entries(prev => ({ ...prev, [key]: match[1].trim() }));
-      }
-
-      // ─── L1: 写作偏好 — 根据项目类型题材的风格要求（每章创作前必读） ───
-      setActiveLevel('L1');
-      const l1SysMsg = { role: 'system' as const, content: '你是一名专业文学编辑，严格按以下三类输出本章的写作偏好。每个类别用【】标题开头，内容1-2句话。\n\n【写作技巧】本章使用的写作技巧和手法\n【节奏经验】本章节奏控制的经验\n【对话心得】对话写作的心得体会' };
-      const l1UserMsg = { role: 'user' as const, content: `分析以下章节正文，按三类输出写作偏好：\n\n${editorContent.slice(0, 5000)}` };
-      let l1FullResult = '';
-      for await (const chunk of streamAiChat({
-        configId: configs[0].id, messages: [l1SysMsg, l1UserMsg], projectId,
-      })) {
-        if (chunk.content) { l1FullResult += chunk.content; }
-        if (chunk.error) break;
-      }
-      // 解析 L1 三类内容
-      const l1CatMap: Record<string, string> = { writing_technique: '写作技巧', pacing_experience: '节奏经验', dialogue_tips: '对话心得' };
-      for (const [key, label] of Object.entries(l1CatMap)) {
-        const match = l1FullResult.match(new RegExp(`【${label}】[\\s\\n]*([^【]*)`));
-        if (match?.[1]?.trim()) setL1Entries(prev => ({ ...prev, [key]: match[1].trim() }));
-      }
-
-      // ─── L2: 经验总结 — 从写作对比中提取的最近创作经验（每章创作前必读） ───
-      setActiveLevel('L2');
-      const l2SysMsg = { role: 'system' as const, content: '你是一名资深文学编辑，严格按以下三类输出本章的经验总结。每个类别用【】标题开头，内容1-2句话。\n\n【伏笔设置】本章设置的伏笔\n【悬念钩子】本章结尾的悬念钩子\n【待回收线索】需要后续章节回收的线索' };
-      const l2UserMsg = { role: 'user' as const, content: `分析以下章节正文，按三类输出经验总结：\n\n${editorContent.slice(0, 5000)}` };
-      let l2FullResult = '';
-      for await (const chunk of streamAiChat({
-        configId: configs[0].id, messages: [l2SysMsg, l2UserMsg], projectId,
-      })) {
-        if (chunk.content) { l2FullResult += chunk.content; }
-        if (chunk.error) break;
-      }
-      // 解析 L2 三类内容
-      const l2CatMap: Record<string, string> = { foreshadowing: '伏笔设置', cliffhanger: '悬念钩子', pending_threads: '待回收线索' };
-      for (const [key, label] of Object.entries(l2CatMap)) {
-        const match = l2FullResult.match(new RegExp(`【${label}】[\\s\\n]*([^【]*)`));
-        if (match?.[1]?.trim()) setL2Entries(prev => ({ ...prev, [key]: match[1].trim() }));
-      }
-
-      // ─── L3: 数值和伏笔 — 角色状态、经验值、道具数量、任务天数、伏笔线索等关键信息（每章自动更新） ───
-      setActiveLevel('L3');
-      const l3SysMsg = { role: 'system' as const, content: '你是一名专业数据提取员，从小说章节中提取可量化的数值信息和伏笔线索。严格按以下格式输出，不存在则写"无"：\n\n【角色状态】\n角色名：当前状态/等级/关键数值变化\n\n【道具/资源】\n道具名：数量变化/获取来源/消耗去向\n\n【任务/天数】\n当前任务：进度/剩余天数/完成状态\n\n【伏笔线索】\n伏笔描述：当前状态（已埋/已收/待回收）' };
-      const l3UserMsg = { role: 'user' as const, content: `从以下章节正文中提取所有数值和伏笔信息：\n\n${editorContent.slice(0, 6000)}` };
-      let l3Result = '';
-      for await (const chunk of streamAiChat({
-        configId: configs[0].id, messages: [l3SysMsg, l3UserMsg], projectId,
-      })) {
-        if (chunk.content) { l3Result += chunk.content; setL3Content(l3Result); }
-        if (chunk.error) break;
-      }
-
-      // ─── L4: 写作对比 — 草稿与定稿差异分析（正文作者不阅读） ───
-      setActiveLevel('L4');
-      const l4SysMsg = { role: 'system' as const, content: '你是一名资深文学编辑，对以下已定稿的章节进行写作质量分析。请从以下维度输出（每项1-3句话）：\n\n1.【读者体验】代入感、情感共鸣\n2.【市场适配】类型契合度、读者定位\n3.【改进建议】可操作的具体优化方向\n4.【风格一致】与项目风格指南的契合度' };
-      const l4UserMsg = { role: 'user' as const, content: `对以下已定稿章节进行写作对比分析：\n\n${editorContent.slice(0, 6000)}` };
-      let l4Result = '';
-      for await (const chunk of streamAiChat({
-        configId: configs[0].id, messages: [l4SysMsg, l4UserMsg], projectId,
-      })) {
-        if (chunk.content) { l4Result += chunk.content; setL4Content(l4Result); }
-        if (chunk.error) break;
-      }
-    } catch {
-      setL3Content('分析失败，请重试');
-      setL4Content('分析失败，请重试');
+      const result = await utils.client.analysis.start.mutate({
+        projectId,
+        chapterId,
+        type: 'l0_l4_summary',
+        editorContent: editorContent,
+        chapterTitle,
+      });
+      setCurrentAnalysisId(result.analysisId);
+      setIsThinkingModel(result.isThinking);
+      startPollingL0L4(result.analysisId);
+    } catch (err: unknown) {
+      setGenerating(false);
+      setL3Content('发起分析失败：' + (err instanceof Error ? err.message : '未知错误'));
+      setL4Content('发起分析失败');
+      setShowL0L4(true);
     }
-    setGenerating(false);
-    setActiveLevel(null);
   };
 
   // Save analysis results to memory entries (L0-L4)
@@ -280,9 +307,9 @@ export function FinalizePanel({
               <button onClick={handleGenerateL0L4} disabled={generating}
                 className="px-8 py-3 bg-gradient-to-r from-gray-800 to-gray-900 text-white rounded-xl text-base font-medium hover:from-gray-900 hover:to-black transition disabled:opacity-50 shadow-sm">
                 {generating ? (
-                  <span className="flex items-center gap-2 justify-center">
-                    <span className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
-                    分析中...
+                  <span className="flex items-center gap-2 justify-center text-center">
+                    <span className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full shrink-0" />
+                    <span className="text-xs leading-tight">{isThinkingModel ? 'AI正在进行详细分析，持续总结，优化创作经验，请耐心等候。' : 'AI正在思考中，请稍候...'}</span>
                   </span>
                 ) : '总结经验'}
               </button>
@@ -300,9 +327,14 @@ export function FinalizePanel({
                 </button>
               </div>
               {generating && (
-                <div className="flex items-center gap-2 text-sm text-gray-400 mb-4">
-                  <span className="animate-spin w-4 h-4 border-2 border-gray-300 border-t-gray-900 rounded-full" />
-                  <span>正在生成 {activeLevel === 'L0' ? '创作铁律' : activeLevel === 'L1' ? '写作偏好' : activeLevel === 'L2' ? '经验总结' : activeLevel === 'L3' ? '数值和伏笔' : '写作对比'}...</span>
+                <div className="flex flex-col gap-1 text-sm text-gray-400 mb-4">
+                  <div className="flex items-center gap-2">
+                    <span className="animate-spin w-4 h-4 border-2 border-gray-300 border-t-gray-900 rounded-full shrink-0" />
+                    <span>{isThinkingModel ? 'AI正在进行详细分析，持续总结，优化创作经验，请耐心等候。' : 'AI正在思考中，请稍候...'}</span>
+                  </div>
+                  <span className="text-xs text-gray-400 ml-6">
+                    {activeLevel?.startsWith('parallel:') ? `正在并行分析中... (${activeLevel.split(':')[1]}/5 已完成)` : `正在分析 ${activeLevel === 'L0' ? '创作铁律' : activeLevel === 'L1' ? '写作偏好' : activeLevel === 'L2' ? '经验总结' : activeLevel === 'L3' ? '数值和伏笔' : '写作对比'}...`}
+                  </span>
                 </div>
               )}
             </>
@@ -333,7 +365,7 @@ export function FinalizePanel({
               </ExperienceSection>
 
               {/* L2: 经验总结 */}
-              <ExperienceSection title="L2 · 经验总结" description="从写作对比中提取的创作经验">
+              <ExperienceSection title="L2 · 经验总结" description="本章写作收获、改进方向和注意事项">
                 {L2_CATEGORIES.map(cat => (
                   <div key={cat.key}>
                     <label className="block text-xs font-medium text-gray-500 mb-1 text-left">{cat.label}</label>
@@ -350,7 +382,7 @@ export function FinalizePanel({
               </ExperienceSection>
 
               {/* L4: 写作对比 */}
-              <ExperienceSection title="L4 · 写作对比" description="草稿与定稿差异分析（正文作者不阅读）">
+              <ExperienceSection title="L4 · 写作对比" description="草稿与定稿差异分析、修改意图提炼（正文作者不阅读）">
                 <textarea value={l4Content} onChange={e => setL4Content(e.target.value)}
                   className="w-full h-40 p-4 text-sm bg-white border border-gray-200 rounded resize-none focus:outline-none focus:ring-1 focus:ring-gray-400 leading-relaxed" placeholder="AI 分析后自动生成..." />
               </ExperienceSection>
@@ -394,7 +426,7 @@ export function FinalizePanel({
           {!showL0L4 ? (
             <button onClick={handleGenerateL0L4} disabled={generating}
               className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition disabled:opacity-50">
-              {generating ? '分析中...' : 'AI 自动分析'}
+              {generating ? (isThinkingModel ? 'Thinking模式等待中...' : 'AI思考中...') : 'AI 自动分析'}
             </button>
           ) : (
             <div className="flex items-center gap-2">
@@ -407,9 +439,14 @@ export function FinalizePanel({
         </div>
 
         {generating && (
-          <div className="flex items-center gap-2 text-sm text-gray-400 mb-4">
-            <span className="animate-spin w-4 h-4 border-2 border-gray-300 border-t-gray-900 rounded-full" />
-            <span>正在生成 {activeLevel === 'L0' ? '创作铁律' : activeLevel === 'L1' ? '写作偏好' : activeLevel === 'L2' ? '经验总结' : activeLevel === 'L3' ? '数值和伏笔' : '写作对比'}...</span>
+          <div className="flex flex-col gap-1 text-sm text-gray-400 mb-4">
+            <div className="flex items-center gap-2">
+              <span className="animate-spin w-4 h-4 border-2 border-gray-300 border-t-gray-900 rounded-full shrink-0" />
+              <span>{isThinkingModel ? 'AI正在进行详细分析，持续总结，优化创作经验，请耐心等候。' : 'AI正在思考中，请稍候...'}</span>
+            </div>
+            <span className="text-xs text-gray-400 ml-6">
+              {activeLevel?.startsWith('parallel:') ? `正在并行分析中... (${activeLevel.split(':')[1]}/5 已完成)` : `正在分析 ${activeLevel === 'L0' ? '创作铁律' : activeLevel === 'L1' ? '写作偏好' : activeLevel === 'L2' ? '经验总结' : activeLevel === 'L3' ? '数值和伏笔' : '写作对比'}...`}
+            </span>
           </div>
         )}
 
@@ -438,7 +475,7 @@ export function FinalizePanel({
             </ExperienceSection>
 
             {/* L2: 经验总结 */}
-            <ExperienceSection title="L2 · 经验总结" description="从写作对比中提取的最近创作经验（每章创作前必读）">
+            <ExperienceSection title="L2 · 经验总结" description="本章写作收获、改进方向和注意事项（每章创作前必读）">
               {L2_CATEGORIES.map(cat => (
                 <div key={cat.key}>
                   <label className="block text-xs font-medium text-gray-500 mb-1">{cat.label}</label>
@@ -455,7 +492,7 @@ export function FinalizePanel({
             </ExperienceSection>
 
             {/* L4: 写作对比 */}
-            <ExperienceSection title="L4 · 写作对比" description="草稿与定稿差异分析（正文作者不阅读）">
+            <ExperienceSection title="L4 · 写作对比" description="草稿与定稿差异分析、修改意图提炼（正文作者不阅读）">
               <textarea value={l4Content} onChange={e => setL4Content(e.target.value)}
                 className="w-full h-40 p-4 text-sm bg-white border border-gray-200 rounded resize-none focus:outline-none focus:ring-1 focus:ring-gray-400 leading-relaxed" placeholder="AI 分析后自动生成..." />
             </ExperienceSection>

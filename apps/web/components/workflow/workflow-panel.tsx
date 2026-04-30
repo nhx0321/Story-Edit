@@ -140,7 +140,7 @@ export function WorkflowPanel({ chapterId, projectId, open, onClose, taskBrief, 
                     setSelfCheckGenerating(true);
                     setSelfCheckReport('');
                     try {
-                      const systemMsg = { role: 'system' as const, content: '你是一名专业的文学编辑和质量审核员。请对小说正文进行全面的自检，找出需要修改的问题。输出格式清晰的自检报告。' };
+                      const systemMsg = { role: 'system' as const, content: '你是一名专业的文学编辑。请对小说正文进行全面的自检，找出需要修改的问题。输出格式清晰的自检报告。注意：报告中不要包含任何签名或署名。' };
                       const userMsg = { role: 'user' as const, content: briefResult?.checkPrompt || `请对以下正文进行自检：\n\n${latestContent.slice(0, 8000)}` };
                       let fullReport = '';
                       for await (const chunk of streamAiChat({

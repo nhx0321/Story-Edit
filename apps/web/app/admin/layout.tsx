@@ -5,16 +5,17 @@ import { useRouter, usePathname } from 'next/navigation';
 import { useAuthStore } from '@/lib/auth-store';
 import Link from 'next/link';
 
-const navItems = [
-  { href: '/admin/review', label: '模板审核', level: null },
-  { href: '/admin/templates', label: '官方模板', level: null },
+const navItems: Array<{ href: string; label: string; level: number | null; separator?: boolean }> = [
+  { href: '/admin/templates', label: '模板广场', level: null },
   { href: '/admin/presets', label: '预设管理', level: null },
-  { href: '/admin/users', label: '用户管理', level: 1 },
   { href: '/admin/permissions', label: '权限管理', level: 0 },
-  { href: '/admin/logs', label: '操作日志', level: null },
-  { href: '/admin/billing', label: '付费管理', level: 1 },
-  { href: '/admin/art-assets', label: '美术资产', level: null },
-  { href: '/admin/sprite-tools', label: '精灵管理', level: null },
+  { href: '/admin/users', label: '用户管理', level: 1 },
+  { href: '/admin/feedback', label: '用户反馈', level: null },
+  // --- 横线分隔 ---
+  { href: '/admin/revenue', label: '营收仪表盘', level: 0, separator: true },
+  { href: '/admin/pricing', label: '模型定价', level: 0 },
+  { href: '/admin/channels', label: '渠道管理', level: 0 },
+  { href: '/admin/migration', label: '历史迁移', level: 0 },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -58,17 +59,21 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 return null;
               }
               return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={`block px-3 py-2 rounded-lg text-sm font-medium transition ${
-                    pathname === item.href
-                      ? 'bg-gray-900 text-white'
-                      : 'text-gray-600 hover:bg-gray-100'
-                  }`}
-                >
-                  {item.label}
-                </Link>
+                <div key={item.href}>
+                  {item.separator && (
+                    <hr className="my-2 border-gray-200" />
+                  )}
+                  <Link
+                    href={item.href}
+                    className={`block px-3 py-2 rounded-lg text-sm font-medium transition ${
+                      pathname?.startsWith(item.href)
+                        ? 'bg-gray-900 text-white'
+                        : 'text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    {item.label}
+                  </Link>
+                </div>
               );
             })}
             <Link

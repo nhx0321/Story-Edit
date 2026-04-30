@@ -1,18 +1,18 @@
-// 精灵豆核心服务 — 充值、消费、道具购买、升级进度计算
+// 精灵豆核心服务 — 充值、流水、升级进度（道具购买/使用已移除）
 import { db } from '../../db';
 import {
-  userSprites, spriteItems, userSpriteItems, spriteBeanTransactions,
-  rechargeOrders, users,
+  userSprites, spriteBeanTransactions,
+  rechargeOrders,
 } from '../../db/schema';
-import { eq, and, desc } from 'drizzle-orm';
+import { eq, desc } from 'drizzle-orm';
 
-// 升级所需经验值
+// 升级所需经验值（单级）
 const LEVEL_XP: Record<number, number> = {
-  1: 50, 2: 100, 3: 150, 4: 200, 5: 250, 6: 300, 7: 400, 8: 500, 9: 800,
+  1: 150, 2: 300, 3: 450, 4: 600, 5: 750, 6: 900, 7: 1200, 8: 1500, 9: 2400,
 };
 // 累计经验值
 const CUMULATIVE_XP: Record<number, number> = {
-  1: 50, 2: 150, 3: 300, 4: 500, 5: 750, 6: 1050, 7: 1450, 8: 1950, 9: 2750,
+  1: 150, 2: 450, 3: 900, 4: 1500, 5: 2250, 6: 3150, 7: 4350, 8: 5850, 9: 8250,
 };
 
 // 升级所需自然生长天数
@@ -22,6 +22,27 @@ const LEVEL_DAYS: Record<number, number> = {
 
 // 汇率：1元 = 100精灵豆
 export const BEAN_RATE = 100;
+
+export async function ensureUserSprite(userId: string) {
+  const [existing] = await db.select({ id: userSprites.id })
+    .from(userSprites)
+    .where(eq(userSprites.userId, userId));
+
+  if (existing) return existing;
+
+  const [created] = await db.insert(userSprites).values({
+    userId,
+    level: 1,
+    customName: null,
+    isHatched: false,
+    guideStep: 0,
+    beanBalance: 0,
+    totalBeanSpent: 0,
+    totalXp: 0,
+  }).returning({ id: userSprites.id });
+
+  return created;
+}
 
 export interface BeanTransaction {
   userId: string;
@@ -85,6 +106,8 @@ export function getLevelProgress(level: number, totalXp: number,
  * 记录精灵豆流水并更新余额和经验值
  */
 export async function recordBeanTransaction(tx: BeanTransaction): Promise<number> {
+  await ensureUserSprite(tx.userId);
+
   // 获取当前余额
   const [sprite] = await db.select({
     beanBalance: userSprites.beanBalance,
@@ -153,6 +176,8 @@ export async function confirmRechargePayment(orderId: string, transactionId?: st
   if (!order) throw new Error('订单不存在');
   if (order.status === 'paid') throw new Error('订单已支付');
 
+  await ensureUserSprite(order.userId);
+
   await db.transaction(async (tx) => {
     // 更新订单状态
     await tx.update(rechargeOrders)
@@ -185,98 +210,6 @@ export async function confirmRechargePayment(orderId: string, transactionId?: st
 }
 
 /**
- * 购买道具（消耗精灵豆）
- */
-export async function purchaseItem(userId: string, itemCode: string) {
-  const [sprite] = await db.select().from(userSprites).where(eq(userSprites.userId, userId));
-  if (!sprite?.isHatched) throw new Error('精灵尚未孵化');
-
-  const [item] = await db.select().from(spriteItems).where(eq(spriteItems.code, itemCode));
-  if (!item) throw new Error('道具不存在');
-  if (!item.isActive) throw new Error('道具已下架');
-
-  if ((sprite.beanBalance ?? 0) < item.price) {
-    throw new Error('精灵豆余额不足');
-  }
-
-  await db.transaction(async (tx) => {
-    const newBalance = (sprite.beanBalance ?? 0) - item.price;
-    const newTotalSpent = (sprite.totalBeanSpent ?? 0) + item.price;
-    const newTotalXp = (sprite.totalXp ?? 0) + item.price;
-
-    await tx.update(userSprites).set({
-      beanBalance: newBalance,
-      totalBeanSpent: newTotalSpent,
-      totalXp: newTotalXp,
-      updatedAt: new Date(),
-    }).where(eq(userSprites.userId, userId));
-
-    // 记录流水
-    await tx.insert(spriteBeanTransactions).values({
-      userId,
-      type: 'item_purchase',
-      amount: -item.price,
-      balanceAfter: newBalance,
-      description: `购买道具 ${item.name}`,
-      relatedType: 'item',
-      relatedId: itemCode,
-    });
-
-    // 增加道具库存
-    const [userItem] = await tx.select().from(userSpriteItems)
-      .where(and(eq(userSpriteItems.userId, userId), eq(userSpriteItems.itemCode, itemCode)));
-
-    if (userItem) {
-      await tx.update(userSpriteItems).set({
-        quantity: (userItem.quantity ?? 0) + 1,
-        updatedAt: new Date(),
-      }).where(eq(userSpriteItems.id, userItem.id));
-    } else {
-      await tx.insert(userSpriteItems).values({
-        userId,
-        itemCode,
-        quantity: 1,
-      });
-    }
-  });
-
-  return { ok: true, itemName: item.name, itemIcon: item.icon };
-}
-
-/**
- * 使用道具（加速生长 + 获得经验值）
- */
-export async function useItem(userId: string, itemCode: string) {
-  const [sprite] = await db.select().from(userSprites).where(eq(userSprites.userId, userId));
-  if (!sprite?.isHatched) throw new Error('精灵尚未孵化');
-
-  const [userItem] = await db.select().from(userSpriteItems)
-    .where(and(eq(userSpriteItems.userId, userId), eq(userSpriteItems.itemCode, itemCode)));
-
-  if (!userItem || (userItem.quantity ?? 0) <= 0) throw new Error('道具数量不足');
-
-  const [item] = await db.select().from(spriteItems).where(eq(spriteItems.code, itemCode));
-  if (!item) throw new Error('道具不存在');
-
-  // 将道具效果（分钟）转换为天数，不足1天按1天算
-  const daysToAdd = Math.max(1, Math.ceil(item.effectMinutes / 1440));
-
-  await db.transaction(async (tx) => {
-    await tx.update(userSpriteItems).set({
-      quantity: (userItem.quantity ?? 0) - 1,
-      updatedAt: new Date(),
-    }).where(eq(userSpriteItems.id, userItem.id));
-
-    await tx.update(userSprites).set({
-      bonusDays: (sprite.bonusDays ?? 0) + daysToAdd,
-      updatedAt: new Date(),
-    }).where(eq(userSprites.userId, userId));
-  });
-
-  return { ok: true, itemName: item.name, daysAdded: daysToAdd, xpGained: item.price };
-}
-
-/**
  * 获取精灵豆余额和流水
  */
 export async function getBeanBalanceAndTransactions(userId: string, limit = 20) {
@@ -304,10 +237,3 @@ export async function getBeanBalanceAndTransactions(userId: string, limit = 20) 
   };
 }
 
-/**
- * 计算可兑换 VIP 天数
- * 每消耗 100 精灵豆 = 1 天可兑换
- */
-export function getConvertibleDays(totalBeanSpent: number, convertedDays: number): number {
-  return Math.floor(totalBeanSpent / 100) - convertedDays;
-}

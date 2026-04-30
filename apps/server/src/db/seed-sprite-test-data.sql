@@ -8,6 +8,7 @@ VALUES
   ('sunlight',    '阳光水滴', 'plant',   1440, 50,  '💧', true),
   ('feather',     '蓬松羽毛', 'animal',  1440, 50,  '🪶', true),
   ('breeze',      '微风宝瓶', 'element', 1440, 50,  '🏺', true),
+  ('pet',         '抚摸',     'all',     0,    100, '🤚', true),
   ('snack',       '精灵小食', 'all',     0,    10,  '🍬', true),
   ('blanket',     '精灵小毯', 'all',     0,    20,  '🛏️', true),
   ('music_box',   '音乐盒',   'all',     0,    30,  '🎵', true)
@@ -24,14 +25,14 @@ FROM users
 WHERE email = 'test_sunflower@test.com'
 ON CONFLICT (user_id) DO NOTHING;
 
--- 测试精灵2：动物系·小狐狸 Lv.1（从Lv.0孵化到Lv.1）
+-- 测试精灵2：动物系·小橘猫 Lv.1（从Lv.0孵化到Lv.1）
 INSERT INTO user_sprites (user_id, species, variant, custom_name, user_nickname, companion_style,
                           total_active_days, bonus_days, is_hatched, guide_step, bean_balance)
 SELECT
-  id, 'animal', 'fox', '阿狐', '测试员小狐', 'quiet',
+  id, 'animal', 'orange-cat', '阿橘', '测试员小橘', 'quiet',
   0, 0, true, 5, 500
 FROM users
-WHERE email = 'test_fox@test.com'
+WHERE email = 'test_orange-cat@test.com'
 ON CONFLICT (user_id) DO NOTHING;
 
 -- 测试精灵3：元素系·小风灵 Lv.2（从Lv.0孵化到Lv.1再到Lv.2，测试升级动画）
@@ -47,25 +48,25 @@ ON CONFLICT (user_id) DO NOTHING;
 -- ---------- 测试精灵道具库存 ----------
 -- 给3个测试精灵各发一份全套道具用于测试
 INSERT INTO user_sprite_items (user_id, item_code, quantity)
-SELECT u.id, 'sunlight', 5 FROM users u WHERE u.email IN ('test_sunflower@test.com','test_fox@test.com','test_wind@test.com')
+SELECT u.id, 'sunlight', 5 FROM users u WHERE u.email IN ('test_sunflower@test.com','test_orange-cat@test.com','test_wind@test.com')
 ON CONFLICT DO NOTHING;
 
 INSERT INTO user_sprite_items (user_id, item_code, quantity)
-SELECT u.id, 'feather', 5 FROM users u WHERE u.email IN ('test_sunflower@test.com','test_fox@test.com','test_wind@test.com')
+SELECT u.id, 'feather', 5 FROM users u WHERE u.email IN ('test_sunflower@test.com','test_orange-cat@test.com','test_wind@test.com')
 ON CONFLICT DO NOTHING;
 
 INSERT INTO user_sprite_items (user_id, item_code, quantity)
-SELECT u.id, 'breeze', 5 FROM users u WHERE u.email IN ('test_sunflower@test.com','test_fox@test.com','test_wind@test.com')
+SELECT u.id, 'breeze', 5 FROM users u WHERE u.email IN ('test_sunflower@test.com','test_orange-cat@test.com','test_wind@test.com')
 ON CONFLICT DO NOTHING;
 
 INSERT INTO user_sprite_items (user_id, item_code, quantity)
-SELECT u.id, 'snack', 10 FROM users u WHERE u.email IN ('test_sunflower@test.com','test_fox@test.com','test_wind@test.com')
+SELECT u.id, 'snack', 10 FROM users u WHERE u.email IN ('test_sunflower@test.com','test_orange-cat@test.com','test_wind@test.com')
 ON CONFLICT DO NOTHING;
 
 INSERT INTO user_sprite_items (user_id, item_code, quantity)
-SELECT u.id, 'blanket', 5 FROM users u WHERE u.email IN ('test_sunflower@test.com','test_fox@test.com','test_wind@test.com')
+SELECT u.id, 'blanket', 5 FROM users u WHERE u.email IN ('test_sunflower@test.com','test_orange-cat@test.com','test_wind@test.com')
 ON CONFLICT DO NOTHING;
 
 INSERT INTO user_sprite_items (user_id, item_code, quantity)
-SELECT u.id, 'music_box', 5 FROM users u WHERE u.email IN ('test_sunflower@test.com','test_fox@test.com','test_wind@test.com')
+SELECT u.id, 'music_box', 5 FROM users u WHERE u.email IN ('test_sunflower@test.com','test_orange-cat@test.com','test_wind@test.com')
 ON CONFLICT DO NOTHING;

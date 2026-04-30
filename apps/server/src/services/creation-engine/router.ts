@@ -27,6 +27,7 @@ export const creationRouter = router({
       characterStates: z.array(z.string()).default([]),
       redLines: z.array(z.string()).default([]),
       styleGuide: z.string().default(''),
+      experienceText: z.string().default(''),
       isPremium: z.boolean().default(false),
     }))
     .mutation(async ({ ctx, input }) => {
@@ -49,6 +50,7 @@ export const creationRouter = router({
         isPremium: input.isPremium,
         includeRedLines: input.isPremium,
         includeStateSnapshot: input.isPremium,
+        experienceText: input.experienceText || undefined,
       });
 
       const estimatedTokens = messages.reduce((sum, m) => sum + estimateTokens(m.content), 0);

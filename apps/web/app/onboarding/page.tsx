@@ -9,7 +9,7 @@ type Step = 'choose' | 'config' | 'test' | 'done';
 const providers = [
   {
     id: 'longcat', name: 'LongCat',
-    desc: '零成本上手，官方可申请每日 5000 万 token 免费额度',
+    desc: '零成本上手，官方可申请每日 5000 万 Token免费额度',
     url: 'https://longcat.chat',
     tag: '限时免费',
   },
@@ -106,9 +106,28 @@ export default function OnboardingPage() {
         {/* Step 1: 选择模型 */}
         {step === 'choose' && (
           <div>
-            <h2 className="text-xl font-bold mb-2">选择 AI 模型</h2>
-            <p className="text-sm text-gray-500 mb-1">选择你的 AI 创作伙伴，后续可随时更换</p>
-            <p className="text-xs text-gray-400 mb-6">所有模型均可免费或低成本使用</p>
+            <h2 className="text-xl font-bold mb-2">开始创作</h2>
+            <p className="text-sm text-gray-500 mb-6">选择适合你的 AI 接入方式</p>
+
+            {/* 平台Token — 推荐 */}
+            <button onClick={() => router.push('/dashboard')}
+              className="w-full text-left p-5 rounded-lg border-2 border-gray-900 bg-gray-50 hover:bg-gray-100 transition mb-4">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-gray-900">使用平台 Token</span>
+                <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">推荐</span>
+              </div>
+              <p className="text-sm text-gray-600 mt-1.5">无需配置 API Key，免费模型每日可用 100,000 Token；收费模型按实际用量计费且不受该免费限额影响</p>
+              <p className="text-xs text-gray-400 mt-1">支持 DeepSeek / LongCat / Qwen 等模型 · 随时可充值</p>
+            </button>
+
+            {/* 分隔 */}
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex-1 h-px bg-gray-200" />
+              <span className="text-xs text-gray-400">或</span>
+              <div className="flex-1 h-px bg-gray-200" />
+            </div>
+
+            <p className="text-xs text-gray-400 mb-3">使用自有 API Key 调用模型（高级用户）</p>
             <div className="space-y-3">
               {providers.map(p => (
                 <button key={p.id}
@@ -131,8 +150,9 @@ export default function OnboardingPage() {
                 </button>
               ))}
             </div>
-            <button onClick={() => router.push('/dashboard')}
-              className="w-full mt-4 text-sm text-gray-400 hover:text-gray-600">稍后配置</button>
+            <p className="text-xs text-gray-400 text-center mt-4">
+              自有 Key 调用不走平台 Token 计费，仅使用你提供的 API 额度
+            </p>
           </div>
         )}
 
@@ -159,7 +179,7 @@ export default function OnboardingPage() {
                   <ol className="text-sm text-blue-800 space-y-1.5 list-decimal list-inside">
                     <li>访问 <a href="https://longcat.chat" target="_blank" rel="noopener noreferrer" className="font-mono bg-blue-100 px-1 rounded text-blue-700 hover:underline">longcat.chat</a> 注册账号</li>
                     <li>进入「API 广场」，点击「申请更多额度」</li>
-                    <li>填写简单问题后即可获得每日 5000 万 token 免费额度</li>
+                    <li>填写简单问题后即可获得每日 5000 万 Token免费额度</li>
                     <li>在 API 管理页面创建 API Key</li>
                     <li>将获取的 API Key 粘贴到下方输入框</li>
                   </ol>

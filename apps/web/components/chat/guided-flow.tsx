@@ -18,10 +18,10 @@ interface GuidedFlowProps {
 
 // 文学编辑步骤（含设定联动流程）
 const EDITOR_STEPS: StepConfig[] = [
-  { key: 'story_needs', label: '需求收集', prompt: '我们先聊聊你的核心创意和故事类型，了解你想写一个什么样的故事。' },
+  { key: 'story_needs', label: '需求收集', prompt: '我们先聊聊您的核心创意和故事类型，了解您想写一个什么样的故事。' },
   { key: 'story_skeleton', label: '故事骨架', prompt: '现在来搭建故事骨架，包括世界观、主角成长线和核心冲突。' },
   { key: 'story_narrative', label: '故事脉络', prompt: '现在基于故事骨架，生成全书故事脉络总纲——包括主线剧情、核心冲突演进、各卷主题定位。' },
-  { key: 'settings', label: '设定补充', prompt: '故事脉络已确认。现在切换到「设定编辑」搭建世界观和设定体系。' },
+  { key: 'settings', label: '设定补充', prompt: '故事脉络已确认。请点击页面上的「前往设定管理」按钮，切换到设定编辑进行设定搭建。设定编辑会基于故事脉络搭建设定体系。' },
   { key: 'settings_delivery', label: '设定接收', prompt: '设定编辑已完成各项基础设定，请查看设定交付清单，确认是否需要根据设定增量修改故事脉络。' },
   { key: 'volume_plan', label: '分卷规划', prompt: '故事脉络和设定均已确认。现在逐层展开卷/单元/章节。' },
   { key: 'unit_breakdown', label: '单元拆解', prompt: '现在把每卷拆解为详细的单元梗概，融入已确认的设定内容。' },
@@ -32,13 +32,13 @@ const EDITOR_STEPS: StepConfig[] = [
 const SETTING_EDITOR_STEPS: StepConfig[] = [
   { key: 'world_view', label: '世界观', prompt: '我们先来设计底层世界观，包括故事的时代背景、社会结构、核心规则和不可打破的铁则。' },
   { key: 'factions', label: '阵营势力', prompt: '现在设计各个阵营势力，包括他们的目标、关系和冲突。' },
-  { key: 'protagonists', label: '主角团', prompt: '接下来创建主角团成员设定，包括外貌、性格、背景、动机和能力。' },
-  { key: 'antagonists', label: '反派势力', prompt: '现在设计反派势力，包括反派组织、目标和对抗关系。' },
+  { key: 'protagonists', label: '主角团', prompt: '**您的主角叫什么？**他/她有哪些重要的伙伴？可以先告诉我，我将在您的创意基础上进一步撰写。' },
+  { key: 'antagonists', label: '反派势力', prompt: '有哪些重要的反派、终极BOSS？或是身份反转、亦师亦友的重要角色？您可以先告诉我。' },
   { key: 'growth_system', label: '成长体系', prompt: '设计力量/成长体系，确定角色成长路径、能力边界和代价。' },
   { key: 'finance', label: '金融体系', prompt: '设计经济体系，包括货币、物价、交易方式等。' },
-  { key: 'key_items', label: '重要道具', prompt: '补充重要道具和物资设定，包括稀有物品、神器和关键物资。' },
+  { key: 'key_items', label: '重要道具', prompt: '您希望道具是有体系等级类的，还是相对独立的？有什么想法都可以告诉我。' },
   { key: 'key_locations', label: '重要地理', prompt: '补充重要地理设定，包括地图、重要地点和环境特征。' },
-  { key: 'custom', label: '自定义', prompt: '你还有其他想法和细节需要补充吗？可以自由添加任何设定内容。' },
+  { key: 'custom', label: '自定义', prompt: '您还有其他想法和细节需要补充吗？可以自由添加任何设定内容。' },
   { key: 'consistency', label: '一致性复盘', prompt: '最后通读所有设定，检查逻辑自洽性，识别潜在冲突。' },
 ];
 
@@ -85,11 +85,11 @@ export function GuidedFlow({
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
         {/* Header */}
         <div className="px-4 py-2 border-b border-gray-100 flex items-center justify-between">
-          <span className="text-xs font-medium text-gray-500">引导创作</span>
+          <span className="text-xs font-medium text-gray-500">创作引导</span>
           <button
             onClick={onClose}
             className="text-gray-400 hover:text-gray-600 transition"
-            title="关闭引导"
+            title="关闭创作引导"
           >
             ×
           </button>

@@ -28,6 +28,7 @@ const ACTION_LABELS: Record<string, string> = {
 
 const ACTION_HINTS: Record<string, string> = {
   create_chapter: '创建的是章节大纲（标题+梗概），点击章节进入编辑器，使用"AI 创作"可生成正文',
+  create_unit: '创建的是单元大纲（标题+梗概），请确认所属卷是否正确',
   update_volume: '确认后将覆盖原有卷内容，无法撤销',
   update_unit: '确认后将覆盖原有单元内容，无法撤销',
   update_chapter: '确认后将覆盖原有章节梗概，无法撤销',
@@ -75,8 +76,11 @@ export function ActionCard({ actionType, payload, onConfirm, onSupplement, confi
   const summary = (payload.summary as string) || '';
   const isCreateType = CREATE_TYPES.includes(actionType);
 
-  // deliver_settings / narrative 的内容渲染
+  // 内容预览渲染 — 在确认按钮上方显示将要创建/更新的文本内容
   const renderContent = () => {
+    const content = (payload.content as string) || '';
+    const synopsis = (payload.synopsis as string) || '';
+    const previewText = content || synopsis || summary;
     if (actionType === 'deliver_settings' && summary) {
       return (
         <div className="mt-2 p-2 bg-white/60 rounded text-xs text-gray-700 whitespace-pre-wrap max-h-40 overflow-y-auto">
@@ -84,10 +88,36 @@ export function ActionCard({ actionType, payload, onConfirm, onSupplement, confi
         </div>
       );
     }
-    if ((actionType === 'create_narrative' || actionType === 'update_narrative') && summary) {
+    if (previewText && (actionType.startsWith('create_') || actionType.startsWith('update_'))) {
+      const maxH = (actionType === 'create_narrative' || actionType === 'update_narrative') ? 'max-h-60' : 'max-h-40';
       return (
-        <div className="mt-2 p-2 bg-white/60 rounded text-xs text-gray-700 whitespace-pre-wrap max-h-60 overflow-y-auto">
-          {summary}
+        <div className={`mt-2 p-2 bg-white/60 rounded text-xs text-gray-700 whitespace-pre-wrap ${maxH} overflow-y-auto`}>
+          {previewText.length > 800 ? previewText.slice(0, 800) + '...' : previewText}
+        </div>
+      );
+    }
+    return null;
+  };
+
+  // 层级定位信息 — 让用户确认所属卷/单元是否正确
+  const renderParentContext = () => {
+    if (actionType === 'create_unit' && payload.volumeIndex != null) {
+      return (
+        <div className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          所属：第 {String(payload.volumeIndex)} 卷
+        </div>
+      );
+    }
+    if (actionType === 'create_chapter' && payload.volumeIndex != null && payload.unitIndex != null) {
+      return (
+        <div className="mt-1.5 inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          所属：第 {String(payload.volumeIndex)} 卷 · 第 {String(payload.unitIndex)} 单元
         </div>
       );
     }
@@ -129,6 +159,7 @@ export function ActionCard({ actionType, payload, onConfirm, onSupplement, confi
         )}
       </div>
       {renderContent()}
+      {renderParentContext()}
       {error && <p className="mt-2 text-xs text-red-600 whitespace-pre-wrap">{error}</p>}
       {!done && !error && ACTION_HINTS[actionType] && (
         <p className="mt-2 text-xs text-gray-500">{ACTION_HINTS[actionType]}</p>

@@ -1,0 +1,12 @@
+total 13
+drwxr-xr-x 1 Administrator 197121    0  4月 26 17:37 .
+drwxr-xr-x 1 Administrator 197121    0  4月 29 03:29 ..
+drwxr-xr-x 1 Administrator 197121    0  4月 26 02:25 ai
+drwxr-xr-x 1 Administrator 197121    0  4月 30 13:41 billing
+drwxr-xr-x 1 Administrator 197121    0  4月 26 02:25 inventory
+-rw-r--r-- 1 Administrator 197121  201  4月 10 17:30 layout.tsx
+-rw-r--r-- 1 Administrator 197121 2690  4月 26 17:37 page.tsx
+drwxr-xr-x 1 Administrator 197121    0  4月 26 11:12 profile
+drwxr-xr-x 1 Administrator 197121    0  4月 26 02:25 shop
+drwxr-xr-x 1 Administrator 197121    0  4月 26 17:38 subscription
+drwxr-xr-x 1 Administrator 197121    0  4月 26 02:25 usage

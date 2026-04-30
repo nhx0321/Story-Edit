@@ -12,10 +12,11 @@ export async function cleanupDeletedProjects() {
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - DAYS_BEFORE_PERMANENT_DELETE);
 
-  const result = await db.delete(projects)
-    .where(and(eq(projects.status, 'deleted'), lt(projects.deletedAt, cutoffDate)));
+  const deletedProjects = await db.delete(projects)
+    .where(and(eq(projects.status, 'deleted'), lt(projects.deletedAt, cutoffDate)))
+    .returning({ id: projects.id });
 
-  const deletedCount = result.rowCount;
+  const deletedCount = deletedProjects.length;
   if (deletedCount > 0) {
     console.log(`[Cleanup] Permanently deleted ${deletedCount} project(s) older than ${DAYS_BEFORE_PERMANENT_DELETE} days`);
   }
@@ -38,29 +39,35 @@ export async function cleanupDeletedOutlineElements() {
     .where(and(eq(chapters.status, 'deleted'), lt(chapters.deletedAt, cutoffDate)));
 
   for (const ch of expiredChapters) {
-    const verResult = await db.delete(chapterVersions).where(eq(chapterVersions.chapterId, ch.id));
-    totalDeleted += verResult.rowCount ?? 0;
+    const deletedVersions = await db.delete(chapterVersions)
+      .where(eq(chapterVersions.chapterId, ch.id))
+      .returning({ id: chapterVersions.id });
+    totalDeleted += deletedVersions.length;
   }
 
   // 2. 删除过期章节
-  const chResult = await db.delete(chapters)
-    .where(and(eq(chapters.status, 'deleted'), lt(chapters.deletedAt, cutoffDate)));
-  totalDeleted += chResult.rowCount ?? 0;
+  const deletedChapters = await db.delete(chapters)
+    .where(and(eq(chapters.status, 'deleted'), lt(chapters.deletedAt, cutoffDate)))
+    .returning({ id: chapters.id });
+  totalDeleted += deletedChapters.length;
 
   // 3. 删除过期单元
-  const uResult = await db.delete(units)
-    .where(and(eq(units.status, 'deleted'), lt(units.deletedAt, cutoffDate)));
-  totalDeleted += uResult.rowCount ?? 0;
+  const deletedUnits = await db.delete(units)
+    .where(and(eq(units.status, 'deleted'), lt(units.deletedAt, cutoffDate)))
+    .returning({ id: units.id });
+  totalDeleted += deletedUnits.length;
 
   // 4. 删除过期卷
-  const vResult = await db.delete(volumes)
-    .where(and(eq(volumes.status, 'deleted'), lt(volumes.deletedAt, cutoffDate)));
-  totalDeleted += vResult.rowCount ?? 0;
+  const deletedVolumes = await db.delete(volumes)
+    .where(and(eq(volumes.status, 'deleted'), lt(volumes.deletedAt, cutoffDate)))
+    .returning({ id: volumes.id });
+  totalDeleted += deletedVolumes.length;
 
   // 5. 删除过期设定
-  const sResult = await db.delete(settings)
-    .where(and(not(isNull(settings.deletedAt)), lt(settings.deletedAt, cutoffDate)));
-  totalDeleted += sResult.rowCount ?? 0;
+  const deletedSettings = await db.delete(settings)
+    .where(and(not(isNull(settings.deletedAt)), lt(settings.deletedAt, cutoffDate)))
+    .returning({ id: settings.id });
+  totalDeleted += deletedSettings.length;
 
   if (totalDeleted > 0) {
     console.log(`[Cleanup] Permanently deleted ${totalDeleted} outline/setting element(s) older than ${DAYS_BEFORE_PERMANENT_DELETE} days`);

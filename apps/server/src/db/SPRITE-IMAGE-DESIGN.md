@@ -61,7 +61,7 @@ Lv.9 精灵完整形象
 | 文件 | 内容 |
 |------|------|
 | `seed-sprite-all-levels.sql` | 植物系·向日葵 0-9级（10张SVG） |
-| `seed-sprite-animal.sql` | 动物系·小狐狸 0-9级（10张SVG） |
+| `seed-sprite-animal.sql` | 动物系·小橘猫 0-9级（10张SVG） |
 | `seed-sprite-element.sql` | 元素系·小风灵 0-9级（10张SVG） |
 
 ## 升级动画设计

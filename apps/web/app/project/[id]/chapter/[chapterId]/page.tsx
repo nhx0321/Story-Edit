@@ -1,12 +1,14 @@
 'use client';
 
+import { useParams } from 'next/navigation';
 import { ChapterWorkspace } from '@/components/chapter/chapter-workspace';
 
-export default function ChapterEditorPage({ params }: { params: { id: string; chapterId: string } }) {
+export default function ChapterEditorPage() {
+  const { id, chapterId } = useParams<{ id: string; chapterId: string }>();
   return (
     <ChapterWorkspace
-      projectId={params.id}
-      chapterId={params.chapterId}
+      projectId={id}
+      chapterId={chapterId}
     />
   );
 }

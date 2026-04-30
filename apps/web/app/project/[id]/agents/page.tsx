@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, useRef } from 'react';
-import Link from 'next/link';
+import { useState } from 'react';
+import { useParams } from 'next/navigation';
 import { trpc } from '@/lib/trpc';
+import { useWorkflowProgress } from '@/lib/use-workflow-progress';
+import { ProjectSidebar } from '@/components/layout/project-sidebar';
 import { streamAiChat } from '@/lib/ai-stream';
 
 const AGENT_ICONS: Record<string, string> = {
@@ -19,25 +21,26 @@ const AGENT_COLORS: Record<string, string> = {
 
 type AgentRoleKey = 'editor' | 'setting_editor' | 'writer';
 
-export default function AgentSkillsPage({ params }: { params: { id: string } }) {
+export default function AgentSkillsPage() {
+  const { id: projectId } = useParams<{ id: string }>();
+  const progress = useWorkflowProgress(projectId);
+  const { data: projectData } = trpc.project.get.useQuery({ id: projectId });
   const { data: agentPrompts, isLoading } = trpc.conversation.getAgentPrompts.useQuery(
-    { projectId: params.id },
+    { projectId },
   );
   const { data: configs } = trpc.ai.listConfigs.useQuery(undefined);
-  const { data: profile } = trpc.userAccount.getProfile.useQuery();
   const utils = trpc.useUtils();
-
-  const isPremium = profile && (profile.vipLevel === 'VIP' || profile.vipLevel === '年费VIP' || profile.vipLevel === '体验VIP');
+  const isPremium = true; // 取消免费/VIP 限制，全部功能开放
 
   const savePrompt = trpc.conversation.saveAgentPrompt.useMutation({
     onSuccess: () => {
-      utils.conversation.getAgentPrompts.invalidate({ projectId: params.id });
+      utils.conversation.getAgentPrompts.invalidate({ projectId });
     },
   });
 
   const resetPrompt = trpc.conversation.resetAgentPrompt.useMutation({
     onSuccess: () => {
-      utils.conversation.getAgentPrompts.invalidate({ projectId: params.id });
+      utils.conversation.getAgentPrompts.invalidate({ projectId });
     },
   });
 
@@ -67,12 +70,12 @@ export default function AgentSkillsPage({ params }: { params: { id: string } }) 
 
   const handleSave = async () => {
     if (!editingAgent) return;
-    await savePrompt.mutateAsync({ projectId: params.id, roleKey: editingAgent, prompt: editPrompt });
+    await savePrompt.mutateAsync({ projectId, roleKey: editingAgent, prompt: editPrompt });
     setEditingAgent(null);
   };
 
   const handleReset = async (roleKey: AgentRoleKey) => {
-    await resetPrompt.mutateAsync({ projectId: params.id, roleKey });
+    await resetPrompt.mutateAsync({ projectId, roleKey });
     setEditingAgent(null);
   };
 
@@ -90,7 +93,7 @@ export default function AgentSkillsPage({ params }: { params: { id: string } }) 
 
     try {
       const refineResult = await refinePrompt.mutateAsync({
-        projectId: params.id,
+        projectId,
         roleKey: editingAgent,
         userPreferences: aiRefineInput,
         currentPrompt: agent.currentPrompt,
@@ -103,7 +106,7 @@ export default function AgentSkillsPage({ params }: { params: { id: string } }) 
           { role: 'system', content: refineResult.systemMessage },
           { role: 'user', content: refineResult.userMessage },
         ],
-        projectId: params.id,
+        projectId,
       })) {
         if (chunk.error) {
           setAiRefineOutput(`优化出错：${chunk.error}`);
@@ -121,51 +124,46 @@ export default function AgentSkillsPage({ params }: { params: { id: string } }) 
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-5xl mx-auto p-8">
-        <Link href={`/project/${params.id}`} className="text-sm text-gray-500 hover:text-gray-900">&larr; 返回项目</Link>
-        <div className="mt-4 mb-8">
-          <h1 className="text-2xl font-bold">AI 助手技能</h1>
-          <p className="text-sm text-gray-500 mt-1">查看和自定义三个 Agent 的系统提示词</p>
-        </div>
+    <div className="min-h-screen bg-gray-50 flex">
+      <ProjectSidebar
+        projectId={projectId}
+        projectName={projectData?.name || '项目'}
+        projectGenre={projectData?.genre}
+        projectStyle={projectData?.style}
+        currentPath="/agents"
+        progress={progress}
+      />
+      <main className="flex-1 p-8">
+        <div className="max-w-5xl mx-auto">
+          <div className="mb-8">
+            <h1 className="text-2xl font-bold">AI 助手技能</h1>
+            <p className="text-sm text-gray-500 mt-1">查看和自定义三个 Agent 的系统提示词</p>
+          </div>
 
-        {!isPremium && (
-          <div className="mb-6 p-4 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-xl">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium text-amber-800">🔒 自定义提示词为付费功能</p>
-                <p className="text-sm text-amber-600 mt-1">升级会员后可自定义修改 Agent 系统提示词</p>
-              </div>
-              <Link href="/billing"
-                className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition shrink-0">
-                升级会员
-              </Link>
+
+          {isLoading ? (
+            <div className="text-center py-16 text-gray-400">加载中...</div>
+          ) : (
+            <div className="space-y-4">
+              {agentPrompts?.map(agent => {
+                const roleKey = agent.roleKey as AgentRoleKey;
+                return (
+                <AgentCard
+                  key={agent.roleKey}
+                  agent={agent}
+                  expanded={expandedAgents.has(roleKey)}
+                  onToggle={() => toggleAgent(roleKey)}
+                  canEdit={!!isPremium}
+                  onEdit={() => openEdit(roleKey, agent.currentPrompt)}
+                  onReset={() => handleReset(roleKey)}
+                  saving={savePrompt.isPending}
+                  resetting={resetPrompt.isPending}
+                />
+                );
+              })}
             </div>
-          </div>
-        )}
-
-        {isLoading ? (
-          <div className="text-center py-16 text-gray-400">加载中...</div>
-        ) : (
-          <div className="space-y-4">
-            {agentPrompts?.map(agent => {
-              const roleKey = agent.roleKey as AgentRoleKey;
-              return (
-              <AgentCard
-                key={agent.roleKey}
-                agent={agent}
-                expanded={expandedAgents.has(roleKey)}
-                onToggle={() => toggleAgent(roleKey)}
-                canEdit={!!isPremium}
-                onEdit={() => openEdit(roleKey, agent.currentPrompt)}
-                onReset={() => handleReset(roleKey)}
-                saving={savePrompt.isPending}
-                resetting={resetPrompt.isPending}
-              />
-              );
-            })}
-          </div>
-        )}
+          )}
+        </div>
 
         {/* 编辑弹窗 */}
         {editingAgent && agentPrompts && (
@@ -194,7 +192,7 @@ export default function AgentSkillsPage({ params }: { params: { id: string } }) 
             }}
           />
         )}
-      </div>
+      </main>
     </div>
   );
 }

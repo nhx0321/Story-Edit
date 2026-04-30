@@ -4,18 +4,23 @@ import { useState, useRef, useEffect } from 'react';
 import { trpc } from '@/lib/trpc';
 
 const actionLabels: Record<string, string> = {
-  adjust_subscription: '调整账户',
   adjust_beans: '增减精灵豆',
+  adjust_token: '增减Token',
   ban_user: '禁止操作',
   unban_user: '解除禁止',
   delete_user: '删除用户',
   promote_admin: '提升管理员',
   demote_admin: '降级管理员',
+  set_user_role: '设置用户角色',
+  set_admin_level: '设置管理员等级',
   create_preset: '创建预设',
   update_preset: '更新预设',
   publish_preset: '发布预设',
   unpublish_preset: '下架预设',
   delete_preset: '删除预设',
+  create_genre_preset: '创建题材预设',
+  update_genre_preset: '更新题材预设',
+  delete_genre_preset: '删除题材预设',
 };
 
 export default function AdminLogsPage() {
@@ -63,9 +68,9 @@ export default function AdminLogsPage() {
 
   const adminLevelLabels: Record<number, string> = {
     0: '总管理员',
-    1: '高级管理员',
-    2: '管理员',
-    3: '见习管理员',
+    1: '一级管理员',
+    2: '二级管理员',
+    3: '三级管理员',
   };
 
   return (

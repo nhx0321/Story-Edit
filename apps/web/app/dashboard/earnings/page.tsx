@@ -4,8 +4,6 @@ import Link from 'next/link';
 import { trpc } from '@/lib/trpc';
 
 export default function EarningsPage() {
-  const utils = trpc.useUtils();
-
   const { data: earnings } = trpc.template.getEarnings.useQuery();
 
   const totalEarned = earnings?.totalEarnings ?? 0;
@@ -21,7 +19,7 @@ export default function EarningsPage() {
         </div>
 
         {/* 收益概览 */}
-        <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-2 gap-4 mb-6">
           <div className="bg-white rounded-xl border border-gray-200 p-5">
             <p className="text-xs text-gray-400 mb-1">累计收益</p>
             <p className="text-2xl font-bold">¥{(totalEarned / 100).toFixed(2)}</p>
@@ -30,15 +28,11 @@ export default function EarningsPage() {
             <p className="text-xs text-gray-400 mb-1">总销量</p>
             <p className="text-2xl font-bold">{totalSales}</p>
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <p className="text-xs text-gray-400 mb-1">模板数</p>
-            <p className="text-2xl font-bold">{earnings?.templateEarnings.length ?? 0}</p>
-          </div>
         </div>
 
         {/* 模板收益明细 */}
-        <div className="bg-white rounded-xl border border-gray-200 mb-6">
-          <h3 className="text-sm font-medium px-5 py-3 border-b border-gray-100">模板收益明细</h3>
+        <div className="bg-white rounded-xl border border-gray-200">
+          <h3 className="text-sm font-medium px-5 py-3 border-b border-gray-100">模板销售明细</h3>
           {earnings?.templateEarnings.length === 0 ? (
             <p className="text-sm text-gray-400 text-center py-8">暂无收益</p>
           ) : (

@@ -1,0 +1,1 @@
+ai_configs	trg_enforce_single_default	enforce_single_default_config	CREATE TRIGGER trg_enforce_single_default BEFORE INSERT OR UPDATE ON public.ai_configs FOR EACH ROW EXECUTE FUNCTION enforce_single_default_config()

@@ -6,9 +6,9 @@ import { router, adminProcedure, adminProcedureLevel, protectedProcedure } from 
 import { db } from '../../db';
 import {
   users, subscriptions, adminAuditLogs, systemPresets, artAssets, userSprites, userTokenAccounts,
+  genrePresets,
 } from '../../db/schema';
 import * as artAssetService from './art-assets';
-import { fileRouter } from '../sprite/file-router';
 import { recordBeanTransaction } from '../sprite/bean-service';
 
 // ========== 辅助函数：记录操作日志 ==========
@@ -65,6 +65,7 @@ export const adminRouter = router({
         avatarUrl: users.avatarUrl,
         isAdmin: users.isAdmin,
         adminLevel: users.adminLevel,
+        userRole: users.userRole,
         bannedFromPublish: users.bannedFromPublish,
         bannedFromPayment: users.bannedFromPayment,
         createdAt: users.createdAt,
@@ -98,24 +99,11 @@ export const adminRouter = router({
 
       return {
         users: userList.map(u => {
-          const sprite = spriteMap.get(u.id);
           const sub = subMap.get(u.id);
-          // VIP 天数从精灵系统计算（bonusDays + convertedDays）
-          const totalVipDays = ((sprite?.bonusDays ?? 0) + (sprite?.convertedDays ?? 0));
-          let vipLevel = '免费版';
-          if (totalVipDays > 365) {
-            vipLevel = '年费VIP';
-          } else if (totalVipDays > 30) {
-            vipLevel = 'VIP';
-          } else if (totalVipDays > 0) {
-            vipLevel = '体验VIP';
-          } else if (sub?.status === 'premium' && sub.currentPeriodEnd && sub.currentPeriodEnd > new Date()) {
-            const days = Math.ceil((sub.currentPeriodEnd.getTime() - Date.now()) / 86400000);
-            vipLevel = days > 365 ? '年费VIP' : days > 30 ? 'VIP' : '体验VIP';
-          } else if (sub?.status === 'trial' && sub.trialEndsAt && sub.trialEndsAt > new Date()) {
-            vipLevel = '体验VIP';
-          }
-          return { ...u, vipLevel };
+          return {
+            ...u,
+            subStatus: sub?.status || null,
+          };
         }),
         total: totalResult?.count || 0,
         page: input.page,
@@ -390,6 +378,59 @@ export const adminRouter = router({
         adminId: ctx.userId,
         adminLevel,
         action: 'adjust_beans',
+        targetType: 'user',
+        targetId: input.userId,
+        details: { amount: input.amount },
+      });
+
+      return { ok: true };
+    }),
+
+  // 增减用户 Token 余额
+  adjustTokenBalance: adminProcedureLevel(1)
+    .input(z.object({
+      userId: z.string().uuid(),
+      amount: z.number().int(), // 正数=增加，负数=减少
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const adminLevel = (ctx as any).adminLevel;
+      if (adminLevel === null || adminLevel > 1) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: '需要一级及以上管理权限' });
+      }
+
+      const [targetUser] = await db.select({ id: users.id }).from(users).where(eq(users.id, input.userId));
+      if (!targetUser) throw new TRPCError({ code: 'NOT_FOUND', message: '用户不存在' });
+
+      // 确保用户有 Token 账户
+      let [account] = await db.select({ balance: userTokenAccounts.balance })
+        .from(userTokenAccounts).where(eq(userTokenAccounts.userId, input.userId));
+      if (!account) {
+        await db.insert(userTokenAccounts).values({
+          userId: input.userId,
+          balance: 0,
+          totalConsumed: 0,
+          totalRecharged: 0,
+        });
+        [account] = await db.select({ balance: userTokenAccounts.balance })
+          .from(userTokenAccounts).where(eq(userTokenAccounts.userId, input.userId));
+      }
+
+      // 检查余额是否足够（减少时）
+      if (input.amount < 0 && (account?.balance ?? 0) < Math.abs(input.amount)) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: '用户 Token 余额不足' });
+      }
+
+      await db.update(userTokenAccounts)
+        .set({
+          balance: sql`${userTokenAccounts.balance} + ${input.amount}`,
+          updatedAt: new Date(),
+        })
+        .where(eq(userTokenAccounts.userId, input.userId));
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel,
+        action: 'adjust_token_balance',
         targetType: 'user',
         targetId: input.userId,
         details: { amount: input.amount },
@@ -973,12 +1014,24 @@ export const adminRouter = router({
         avatarUrl: users.avatarUrl,
         isAdmin: users.isAdmin,
         adminLevel: users.adminLevel,
+        userRole: users.userRole,
         bannedFromPublish: users.bannedFromPublish,
         bannedFromPayment: users.bannedFromPayment,
         createdAt: users.createdAt,
       }).from(users).where(eq(users.id, input.userId));
 
       if (!user) throw new TRPCError({ code: 'NOT_FOUND', message: '用户不存在' });
+
+      // 获取订阅信息（用于管理后台显示）
+      const [sub] = await db.select({
+        status: subscriptions.status,
+        currentPeriodEnd: subscriptions.currentPeriodEnd,
+      }).from(subscriptions).where(eq(subscriptions.userId, input.userId));
+
+      let vipDays = 0;
+      if (sub?.status === 'premium' && sub.currentPeriodEnd) {
+        vipDays = Math.max(0, Math.ceil((sub.currentPeriodEnd.getTime() - Date.now()) / 86400000));
+      }
 
       // 获取精灵豆余额
       const [sprite] = await db.select({
@@ -994,25 +1047,73 @@ export const adminRouter = router({
         totalRecharged: userTokenAccounts.totalRecharged,
       }).from(userTokenAccounts).where(eq(userTokenAccounts.userId, input.userId));
 
-      // VIP 天数 = bonusDays（管理员调整+道具获得）+ convertedDays（精灵豆兑换）
-      const totalVipDays = ((sprite?.bonusDays ?? 0) + (sprite?.convertedDays ?? 0));
-
-      let vipLevel = '免费版';
-      if (totalVipDays > 365) {
-        vipLevel = '年费VIP';
-      } else if (totalVipDays > 30) {
-        vipLevel = 'VIP';
-      } else if (totalVipDays > 0) {
-        vipLevel = '体验VIP';
-      }
-
       return {
-        ...user, vipLevel, vipDays: totalVipDays,
+        ...user,
+        vipDays,
         beanBalance: sprite?.beanBalance ?? 0,
         tokenBalance: tokenAccount?.balance ?? 0,
         tokenConsumed: tokenAccount?.totalConsumed ?? 0,
         tokenRecharged: tokenAccount?.totalRecharged ?? 0,
       };
+    }),
+
+  // ========== 设置用户角色 ==========
+  setUserRole: adminProcedure
+    .input(z.object({
+      userId: z.string().uuid(),
+      role: z.enum(['free', 'paid', 'tester']),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const [target] = await db.select({ id: users.id, nickname: users.nickname })
+        .from(users).where(eq(users.id, input.userId));
+      if (!target) throw new TRPCError({ code: 'NOT_FOUND', message: '用户不存在' });
+
+      await db.update(users)
+        .set({ userRole: input.role, updatedAt: new Date() })
+        .where(eq(users.id, input.userId));
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel: ctx.adminLevel,
+        action: 'set_user_role',
+        targetType: 'user',
+        targetId: input.userId,
+        details: { role: input.role, nickname: target.nickname },
+      });
+
+      return { success: true };
+    }),
+
+  // ========== 设置管理员等级 ==========
+  setAdminLevel: adminProcedureLevel(0)
+    .input(z.object({
+      userId: z.string().uuid(),
+      isAdmin: z.boolean(),
+      adminLevel: z.number().min(0).max(9).nullable(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const [target] = await db.select({ id: users.id, nickname: users.nickname })
+        .from(users).where(eq(users.id, input.userId));
+      if (!target) throw new TRPCError({ code: 'NOT_FOUND', message: '用户不存在' });
+
+      await db.update(users)
+        .set({
+          isAdmin: input.isAdmin,
+          adminLevel: input.isAdmin ? (input.adminLevel ?? 1) : null,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, input.userId));
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel: ctx.adminLevel,
+        action: 'set_admin_level',
+        targetType: 'user',
+        targetId: input.userId,
+        details: { isAdmin: input.isAdmin, adminLevel: input.adminLevel, nickname: target.nickname },
+      });
+
+      return { success: true };
     }),
 
   // ========== 美术资产管理 ==========
@@ -1150,11 +1251,104 @@ export const adminRouter = router({
       return result;
     }),
 
-  getAssetStats: adminProcedure
-    .query(async () => {
-      return artAssetService.getAssetStats();
+  // ========== 题材预设管理 ==========
+
+  listGenrePresets: adminProcedure
+    .input(z.object({
+      genre: z.string().optional(),
+      agentRole: z.string().optional(),
+      projectType: z.string().optional(),
+    }))
+    .query(async ({ input }) => {
+      const conditions = [];
+      if (input.genre) conditions.push(eq(genrePresets.genre, input.genre as any));
+      if (input.agentRole) conditions.push(eq(genrePresets.agentRole, input.agentRole));
+      if (input.projectType) conditions.push(eq(genrePresets.projectType, input.projectType));
+
+      if (conditions.length > 0) {
+        return db.select().from(genrePresets).where(and(...conditions)).orderBy(genrePresets.genre, genrePresets.sortOrder);
+      }
+      return db.select().from(genrePresets).orderBy(genrePresets.genre, genrePresets.sortOrder);
     }),
 
-  // File-based art asset management
-  files: fileRouter,
+  updateGenrePreset: adminProcedure
+    .input(z.object({
+      id: z.string().uuid(),
+      systemPrompt: z.string().optional(),
+      description: z.string().nullable().optional(),
+      stylePrompt: z.string().nullable().optional(),
+      sortOrder: z.number().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const { id, ...updates } = input;
+      const [existing] = await db.select().from(genrePresets).where(eq(genrePresets.id, id));
+      if (!existing) throw new TRPCError({ code: 'NOT_FOUND', message: '题材预设不存在' });
+
+      const updateData: Record<string, unknown> = { ...updates, updatedAt: new Date() };
+      const [preset] = await db.update(genrePresets).set(updateData).where(eq(genrePresets.id, id)).returning();
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel: (ctx as any).adminLevel,
+        action: 'update_genre_preset',
+        targetType: 'genre_preset',
+        targetId: id,
+        details: { genre: existing.genre, agentRole: existing.agentRole },
+      });
+
+      return preset;
+    }),
+
+  createGenrePreset: adminProcedure
+    .input(z.object({
+      genre: z.string().min(1),
+      agentRole: z.string().min(1),
+      projectType: z.string().default('webnovel'),
+      systemPrompt: z.string().min(1),
+      description: z.string().optional(),
+      stylePrompt: z.string().optional(),
+      sortOrder: z.number().default(0),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const [preset] = await db.insert(genrePresets).values({
+        genre: input.genre as any,
+        agentRole: input.agentRole,
+        projectType: input.projectType,
+        systemPrompt: input.systemPrompt,
+        description: input.description || null,
+        stylePrompt: input.stylePrompt || null,
+        sortOrder: input.sortOrder,
+      }).returning();
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel: (ctx as any).adminLevel,
+        action: 'create_genre_preset',
+        targetType: 'genre_preset',
+        targetId: preset.id,
+        details: { genre: input.genre, agentRole: input.agentRole },
+      });
+
+      return preset;
+    }),
+
+  deleteGenrePreset: adminProcedure
+    .input(z.object({ id: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const [existing] = await db.select().from(genrePresets).where(eq(genrePresets.id, input.id));
+      if (!existing) throw new TRPCError({ code: 'NOT_FOUND', message: '题材预设不存在' });
+
+      await db.delete(genrePresets).where(eq(genrePresets.id, input.id));
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel: (ctx as any).adminLevel,
+        action: 'delete_genre_preset',
+        targetType: 'genre_preset',
+        targetId: input.id,
+        details: { genre: existing.genre, agentRole: existing.agentRole },
+      });
+
+      return { ok: true };
+    }),
 });

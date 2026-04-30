@@ -31,12 +31,22 @@ import { fastifyTRPCPlugin, type CreateFastifyContextOptions } from '@trpc/serve
 import { appRouter } from './router';
 import { verifyToken } from './services/auth/utils';
 import { registerAiStreamRoute } from './routes/ai-stream';
+import { registerPlatformAiStreamRoute, registerChannelTestRoute } from './routes/ai-stream-platform';
+import { registerExternalApiRoute } from './routes/api-v1';
 import { registerCleanupScheduler } from './services/project/cleanup';
+import { cleanupExpiredJobs } from './services/ai-job/manager';
+import { checkChannelHealth } from './services/token-relay/channel-manager';
+import { recoverStaleAnalyses } from './services/analysis/router';
 import type { Context } from './trpc';
 
-const app = Fastify({ logger: true });
+const app = Fastify({ logger: true, maxParamLength: 5000, bodyLimit: 20 * 1024 * 1024 });
 
-app.register(cors, { origin: true });
+app.register(cors, {
+  origin: true,
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+});
 
 app.register(fastifyTRPCPlugin, {
   prefix: '/trpc',
@@ -58,6 +68,10 @@ app.get('/health', async () => ({ status: 'ok' }));
 
 // AI 流式输出 SSE 端点
 registerAiStreamRoute(app);
+registerPlatformAiStreamRoute(app);
+registerChannelTestRoute(app);
+// 站外 API 端点（OpenAI 兼容）
+registerExternalApiRoute(app);
 
 const start = async () => {
   try {
@@ -67,6 +81,16 @@ const start = async () => {
 
     // 注册已删除项目自动清理任务（每小时执行）
     registerCleanupScheduler();
+    // AI 流式任务清理（每小时执行）
+    setInterval(() => cleanupExpiredJobs().catch(() => {}), 3600000);
+    // 渠道健康检查（每10分钟执行）
+    setInterval(() => checkChannelHealth().catch(() => {}), 600000);
+    // 启动时立即执行一次
+    checkChannelHealth().catch(() => {});
+    // 恢复因服务重启而中断的分析任务
+    recoverStaleAnalyses().then(count => {
+      if (count > 0) console.log(`已恢复 ${count} 个中断的分析任务`);
+    }).catch(() => {});
   } catch (err) {
     app.log.error(err);
     process.exit(1);

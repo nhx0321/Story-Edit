@@ -41,7 +41,8 @@ const DOCS: Record<string, { title: string; sections: { heading: string; steps: 
         heading: '配置信息',
         steps: [
           'API 地址: https://api.deepseek.com/v1',
-          '默认模型: deepseek-chat',
+          '默认模型: deepseek-v4-pro（V4旗舰版，推荐）',
+          '备选模型: deepseek-v4-flash（轻量快速版）',
           '支持 OpenAI 兼容协议',
         ],
       },

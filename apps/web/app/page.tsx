@@ -1,4 +1,23 @@
+'use client';
+
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { useAuthStore } from '@/lib/auth-store';
+
 export default function Home() {
+  const router = useRouter();
+  const user = useAuthStore(s => s.user);
+
+  // 已登录用户自动跳转到项目列表
+  useEffect(() => {
+    if (user) {
+      router.replace('/dashboard');
+    }
+  }, [user, router]);
+
+  // 已登录时不渲染 Landing Page（避免闪烁）
+  if (user) return null;
+
   return (
     <main className="min-h-screen bg-gradient-to-b from-gray-50 to-white">
       {/* Hero */}
@@ -15,7 +34,7 @@ export default function Home() {
             href="/register"
             className="px-8 py-3 bg-gray-900 text-white rounded-lg font-medium hover:bg-gray-800 transition"
           >
-            免费体验
+            注册
           </a>
           <a
             href="/login"
@@ -24,7 +43,7 @@ export default function Home() {
             登录
           </a>
         </div>
-        <p className="text-sm text-gray-400 mt-4">注册即享免费模板 + 精灵成长系统</p>
+        <p className="text-sm text-gray-400 mt-4">注册即享免费模板 + Token 中转站</p>
       </section>
 
       {/* Features */}
@@ -38,7 +57,7 @@ export default function Home() {
         <div className="p-6 rounded-xl border border-gray-200">
           <h3 className="text-lg font-semibold mb-2">多角色协作</h3>
           <p className="text-gray-500 text-sm">
-            文学编辑构思大纲、小说作者撰写正文、设定编辑把控一致性，各司其职
+            文学编辑构思大纲、正文作者撰写正文、设定编辑把控一致性，各司其职
           </p>
         </div>
         <div className="p-6 rounded-xl border border-gray-200">

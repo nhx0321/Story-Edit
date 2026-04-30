@@ -2,11 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useParams } from 'next/navigation';
 import { trpc } from '@/lib/trpc';
 import { ChatPanel } from '@/components/chat/chat-panel';
 import { DocumentImportDialog } from '@/components/import/document-import-dialog';
-import { exportOutline } from '@/lib/outline-export';
+import { exportOutline, type ExportKind } from '@/lib/outline-export';
 import { useWorkflowProgress } from '@/lib/use-workflow-progress';
 import { ProjectSidebar } from '@/components/layout/project-sidebar';
 
@@ -32,8 +32,8 @@ function Dialog({ title, onClose, onConfirm, children }: {
 type DialogType = null | 'volume' | { type: 'unit'; volumeId: string } | { type: 'chapter'; unitId: string };
 type CreationMode = 'manual' | 'ai';
 
-export default function OutlinePage({ params }: { params: { id: string } }) {
-  const projectId = params.id;
+export default function OutlinePage() {
+  const { id: projectId } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
   const progress = useWorkflowProgress(projectId);
   const { data: projectData } = trpc.project.get.useQuery({ id: projectId });
@@ -43,15 +43,22 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
   useEffect(() => {
     const importSettings = searchParams.get('importSettings');
     const settingIds = searchParams.get('settingIds');
+    const exportParam = searchParams.get('export');
+    if (exportParam === '1') {
+      window.history.replaceState({}, '', `/project/${projectId}/outline`);
+      setShowExportModal(true);
+    }
     if (importSettings === 'true' && settingIds) {
       // 清除 URL 参数
       window.history.replaceState({}, '', `/project/${projectId}/outline`);
-      // 打开文学编辑 ChatPanel，并通知已接收设定
+      // 设置导入的设定ID，传递给 ChatPanel 触发自动分析
+      const ids = settingIds.split(',').filter(Boolean);
+      setImportedSettingIds(ids);
       setChatContext({
         roleKey: 'editor',
         contextPrompt: `以下设定词条已从设定管理页面导入到大纲，请确认接收并分析对故事脉络的影响。\n选中的设定ID：${settingIds}`,
       });
-      setChatOpen(true);
+      openChatAndScroll();
     }
   }, [searchParams, projectId]);
 
@@ -65,7 +72,24 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
   const [dialog, setDialog] = useState<DialogType>(null);
   const [inputTitle, setInputTitle] = useState('');
   const [inputSynopsis, setInputSynopsis] = useState('');
-  const [chatOpen, setChatOpen] = useState(false);
+
+  // 从设定页面导入的设定ID列表
+  const [importedSettingIds, setImportedSettingIds] = useState<string[]>([]);
+
+  // 自动检测未完成的梗概
+  const [continueDialog, setContinueDialog] = useState<{
+    type: 'volume' | 'unit' | 'chapter';
+    label: string;
+    volumeId: string;
+    unitId?: string;
+    chapterId?: string;
+  } | null>(null);
+  const [continueDialogShown, setContinueDialogShown] = useState(false);
+  const [chatOpen, setChatOpen] = useState(true);
+  const openChatAndScroll = (open = true) => {
+    setChatOpen(open);
+    if (open) setTimeout(() => document.getElementById('chat-panel-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+  };
   const [showDeleted, setShowDeleted] = useState(false);
   const [creationMode, setCreationMode] = useState<CreationMode>('manual');
   const [chatContext, setChatContext] = useState<{ roleKey: string; contextPrompt: string } | null>(null);
@@ -83,14 +107,60 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportMode, setExportMode] = useState<'selected' | 'all'>('all');
   const [selectedChapters, setSelectedChapters] = useState<Set<string>>(new Set());
-  const [exportFormat, setExportFormat] = useState<'docx' | 'pdf'>('docx');
+  const [exportKind, setExportKind] = useState<ExportKind>('full');
+  const [exportFormat, setExportFormat] = useState<'docx' | 'folder'>('docx');
   const [exporting, setExporting] = useState(false);
 
-  // 加载完整大纲树（用于 AI 创作上下文）
+  // 加载完整大纲树（用于 AI 创作上下文 + 自动检测未完成梗概）
   const { data: outlineTree } = trpc.project.getOutlineTree.useQuery(
     { projectId },
-    { enabled: chatOpen || aiEditChatOpen },
+    { enabled: true },
   );
+
+  // 自动检测未完成的梗概（卷→单元→章节分级检测）
+  useEffect(() => {
+    if (!outlineTree || outlineTree.length === 0 || continueDialogShown) return;
+
+    for (let vi = 0; vi < outlineTree.length; vi++) {
+      const vol = outlineTree[vi] as any;
+      if (!vol.synopsis?.trim()) {
+        setContinueDialog({ type: 'volume', label: `第${vi + 1}卷「${vol.title}」`, volumeId: vol.id });
+        setContinueDialogShown(true);
+        return;
+      }
+      const units = (vol.units || []) as any[];
+      if (units.length === 0) {
+        setContinueDialog({ type: 'volume', label: `第${vi + 1}卷「${vol.title}」`, volumeId: vol.id });
+        setContinueDialogShown(true);
+        return;
+      }
+      for (let ui = 0; ui < units.length; ui++) {
+        const unit = units[ui];
+        if (!unit.synopsis?.trim()) {
+          setContinueDialog({ type: 'unit', label: `第${vi + 1}卷第${ui + 1}单元「${unit.title}」`, volumeId: vol.id, unitId: unit.id });
+          setContinueDialogShown(true);
+          return;
+        }
+        const chapters = (unit.chapters || []) as any[];
+        if (chapters.length === 0) {
+          setContinueDialog({ type: 'unit', label: `第${vi + 1}卷第${ui + 1}单元「${unit.title}」`, volumeId: vol.id, unitId: unit.id });
+          setContinueDialogShown(true);
+          return;
+        }
+        for (let ci = 0; ci < chapters.length; ci++) {
+          const ch = chapters[ci];
+          if (!ch.synopsis?.trim()) {
+            setContinueDialog({
+              type: 'chapter', label: `第${vi + 1}卷第${ui + 1}单元第${ci + 1}章「${ch.title}」`,
+              volumeId: vol.id, unitId: unit.id, chapterId: ch.id,
+            });
+            setContinueDialogShown(true);
+            return;
+          }
+        }
+      }
+    }
+  }, [outlineTree, continueDialogShown]);
 
   // 加载故事脉络（用于 editor 角色和导出）
   const { data: storyNarrative } = trpc.project.getNarrative.useQuery(
@@ -268,7 +338,7 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
         }
         contextPrompt += `请帮助用户构思新的一卷大纲。请询问用户关于新卷的主题、核心冲突、角色发展等，协助完成规划。`;
         setChatContext({ roleKey: 'editor', contextPrompt });
-        setChatOpen(true);
+        openChatAndScroll();
       } else if (dialog && typeof dialog === 'object' && dialog.type === 'unit') {
         // 新建单元 AI：提示用户是否生成前一单元总结
         const outline = await utils.client.workflow.getOutline.query({ projectId });
@@ -314,7 +384,7 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
         }
         contextPrompt += `请帮助用户构思新的单元大纲。`;
         setChatContext({ roleKey: 'editor', contextPrompt });
-        setChatOpen(true);
+        openChatAndScroll();
       } else if (dialog && typeof dialog === 'object' && dialog.type === 'chapter') {
         // 新建章节 AI：读取前一章节梗概及相关设定
         const outline = await utils.client.workflow.getOutline.query({ projectId });
@@ -342,7 +412,7 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
         if (!contextPrompt) contextPrompt = '（本项目尚无前序章节，请根据项目整体构思进行创作）\n\n';
         contextPrompt += `请帮助用户创作新的章节梗概。`;
         setChatContext({ roleKey: 'writer', contextPrompt });
-        setChatOpen(true);
+        openChatAndScroll();
       }
       setDialog(null);
     } catch (e) {
@@ -361,12 +431,14 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
     const ids = Array.from(selectedSupplementIds);
     if (ids.length === 0) return;
     setSupplementDialogOpen(false);
+    // 设置导入的设定ID，传递给 ChatPanel 触发自动分析
+    setImportedSettingIds(ids);
     // 打开文学编辑ChatPanel，传入选择的设定ID
     setChatContext({
       roleKey: 'editor',
       contextPrompt: `以下设定词条已导入，请确认接收并分析对故事脉络的影响。\n选中的设定ID：${ids.join(',')}`,
     });
-    setChatOpen(true);
+    openChatAndScroll();
   };
 
   const handleConfirm = async () => {
@@ -386,6 +458,46 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
     }
   };
 
+  // 继续创作：展开并滚动到目标位置 + R5: 自动打开AI对话框
+  const handleContinueEditing = () => {
+    if (!continueDialog) return;
+    const { type, label, volumeId, unitId, chapterId: contChapterId } = continueDialog;
+    // 展开所属卷
+    setExpandedVolumes(prev => {
+      const next = new Set(prev);
+      next.add(volumeId);
+      return next;
+    });
+    // 展开所属单元（若涉及）
+    if (unitId) {
+      setExpandedUnits(prev => {
+        const next = new Set(prev);
+        next.add(unitId!);
+        return next;
+      });
+    }
+    // 等待 DOM 更新后滚动到目标元素
+    setTimeout(() => {
+      const targetId = contChapterId || unitId || volumeId;
+      const prefix = type;
+      const el = document.getElementById(`${prefix}-${targetId}`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // 闪烁高亮提示
+      if (el) {
+        el.style.transition = 'box-shadow 0.3s';
+        el.style.boxShadow = '0 0 0 3px #f59e0b';
+        setTimeout(() => { el.style.boxShadow = ''; }, 3000);
+      }
+    }, 300);
+
+    // R5: 自动打开AI对话框，传入检测到的缺失位置
+    const ctxLabel = type === 'volume' ? '卷梗概' : type === 'unit' ? '单元梗概' : '章节梗概';
+    const ctxPrompt = `检测到【${label}】的${ctxLabel}还未创建。请协助用户完成该${type === 'volume' ? '卷' : type === 'unit' ? '单元' : '章节'}的梗概创作。先确认用户是否需要从该位置继续，然后引导用户完成梗概内容。`;
+    setChatContext({ roleKey: 'editor', contextPrompt: ctxPrompt });
+    openChatAndScroll();
+    setContinueDialog(null);
+  };
+
   const statusLabel = (s: string | null) => {
     switch (s) {
       case 'final': return <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">已定稿</span>;
@@ -400,7 +512,7 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
     try {
       // 构建导出数据结构
       const exportData: Awaited<ReturnType<typeof buildExportData>> = await buildExportData();
-      const success = await exportOutline(exportData, exportFormat, { includeContent: true });
+      const success = await exportOutline(exportData, exportFormat, { kind: exportKind });
       if (success) {
         setShowExportModal(false);
         setSelectedChapters(new Set());
@@ -458,8 +570,8 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
     }
 
     return {
-      projectTitle: '小说大纲',
-      projectSynopsis: null,
+      projectTitle: projectData?.name || '小说项目',
+      projectSynopsis: storyNarrative?.content?.slice(0, 300) || null,
       volumes,
       selectedChapters: exportMode === 'selected' ? selectedChapters : undefined,
       storyNarrative,
@@ -483,9 +595,12 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
         projectStyle={projectData?.style}
         currentPath="/outline"
         progress={progress}
+        onExport={() => setShowExportModal(true)}
+        exportDisabled={isPaidTemplateImport}
+        exportDisabledTitle={isPaidTemplateImport ? '付费模板导入的项目不支持导出' : undefined}
       />
-      <main className="flex-1 p-8" data-guide-target="outline-tree">
-        <div className="max-w-3xl mx-auto">
+      <main className="flex-1 overflow-y-auto p-8" data-guide-target="outline-tree">
+        <div>
           <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
             <Link href="/dashboard" className="hover:text-gray-900 transition">项目列表</Link>
             <span className="text-gray-300">/</span>
@@ -496,17 +611,17 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
             {progress.hasVolumes && !progress.hasChapters && <span className="text-amber-500 text-[10px] animate-pulse ml-0.5" title="可编辑大纲">→</span>}
           </div>
         <div className="flex items-center justify-between mt-4 mb-6">
-          <h1 className="text-2xl font-bold">大纲</h1>
+          <h1 className="text-2xl font-bold">大纲编辑</h1>
           <div className="flex gap-2">
-            {/* 导入文档 — 最左侧 */}
+            {/* AI 创建梗概 — 黑底白字，最左侧 */}
+            <button onClick={() => openChatAndScroll()}
+              className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition">
+              AI 创建梗概
+            </button>
+            {/* 导入文档 */}
             <button onClick={() => setImportDialogOpen(true)}
               className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition">
-              导入文档
-            </button>
-            {/* AI 构思 — 黑底白字 */}
-            <button onClick={() => setChatOpen(true)}
-              className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition">
-              AI 构思
+              导入大纲
             </button>
             <button onClick={() => openDialog('volume')}
               className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:border-gray-500 transition">
@@ -516,17 +631,6 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
             <button onClick={handleSupplementSettings}
               className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition">
               补充设定词条
-            </button>
-            <button
-              onClick={() => !isPaidTemplateImport && setShowExportModal(true)}
-              disabled={isPaidTemplateImport}
-              title={isPaidTemplateImport ? '付费模板导入的项目不支持导出' : '导出大纲'}
-              className={`px-4 py-2 border rounded-lg text-sm font-medium transition ${
-                isPaidTemplateImport
-                  ? 'border-gray-200 text-gray-300 cursor-not-allowed'
-                  : 'border-gray-300 hover:border-gray-500'
-              }`}>
-              导出大纲
             </button>
             <button onClick={() => setShowDeleted(!showDeleted)}
               className={`px-4 py-2 border rounded-lg text-sm font-medium transition ${showDeleted ? 'border-orange-300 text-orange-600 bg-orange-50' : 'border-gray-300 text-gray-600 hover:border-gray-500'}`}>
@@ -548,9 +652,8 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
         ) : (
           /* ===== 正常大纲视图 ===== */
           (!volumeList || volumeList.length === 0) ? (
-            <div className="text-center py-16 text-gray-400">
-              <p className="mb-2">还没有创建卷</p>
-              <button onClick={() => openDialog('volume')} className="text-gray-900 font-medium hover:underline">点击新建第一卷</button>
+            <div className="text-center py-4 text-gray-400">
+              <p className="text-sm">点击上方「AI 创建梗概」按钮或直接与下方文学编辑对话创建梗概</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -564,22 +667,59 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
             </div>
           )
         )}
+
       </div>
 
-      {/* 创作关联导航 */}
-      <div className="grid grid-cols-2 gap-4 mt-6 max-w-3xl mx-auto">
-        <Link href={`/project/${projectId}/settings`}
-          className="bg-white rounded-xl border border-gray-200 p-4 hover:border-gray-400 transition text-center">
-          <p className="text-sm font-medium text-gray-900">前往设定管理</p>
-          <p className="text-xs text-gray-400 mt-1">搭建世界观 · 补充设定体系</p>
-        </Link>
-        {progress.hasChapters && (
-          <Link href={`/project/${projectId}/chapters`}
-            className="bg-white rounded-xl border border-gray-200 p-4 hover:border-gray-400 transition text-center">
-            <p className="text-sm font-medium text-gray-900">前往正文创作</p>
-            <p className="text-xs text-gray-400 mt-1">进入章节编辑器撰写正文</p>
-          </Link>
-        )}
+      {/* ChatPanel below button bar */}
+      <div id="chat-panel-anchor" className="mt-6 border-t pt-6">
+        <ChatPanel open={chatOpen} onClose={() => { setChatOpen(false); setChatContext(null); setImportedSettingIds([]); }}
+          projectId={projectId} conversationType="outline"
+          roleKey={chatContext?.roleKey as 'editor' | 'writer' ?? 'editor'}
+          title="请与AI对话，我将协助您自动创建内容。分步骤完成全书简介——基础设定——卷、单元、章节梗概——章节正文创作"
+          minimizedTitle="AI 创建梗概"
+          mode="inline"
+          fullOutline={outlineTree}
+          storyNarrative={storyNarrative}
+          projectSettings={projectSettings}
+          importedSettingIds={importedSettingIds.length > 0 ? importedSettingIds : undefined}
+          customContextPrompt={chatContext?.contextPrompt}
+          onNavigateToSettings={() => {
+            window.location.href = `/project/${projectId}/settings`;
+          }}
+          onNavigateToOutline={() => {
+            setChatOpen(false);
+            setChatContext(null);
+          }}
+          onNavigateToChapter={() => {
+            const firstCh = outlineTree?.[0]?.units?.[0]?.chapters?.[0];
+            if (firstCh) {
+              window.location.href = `/project/${projectId}/chapter/${firstCh.id}`;
+            } else {
+              window.location.href = `/project/${projectId}/chapters`;
+            }
+          }}
+          onActionConfirmed={(type, entity: unknown) => {
+            utils.project.listVolumes.invalidate({ projectId });
+            utils.project.listUnits.invalidate();
+            utils.project.listChapters.invalidate();
+            utils.project.getNarrative.invalidate({ projectId });
+
+            const e = entity as { id?: string } | undefined;
+            if (!e?.id) return;
+            if (type === 'volume') {
+              setExpandedVolumes(prev => {
+                const next = new Set(prev);
+                next.add(e.id!);
+                return next;
+              });
+            } else if (type === 'unit') {
+              setExpandedUnits(prev => {
+                const next = new Set(prev);
+                next.add(e.id!);
+                return next;
+              });
+            }
+          }} />
       </div>
 
       {dialog && (
@@ -624,13 +764,46 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
         </Dialog>
       )}
 
-      {/* 导出大纲对话框 */}
+      {/* 导出作品对话框 */}
       {showExportModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { setShowExportModal(false); setSelectedChapters(new Set()); }}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => { setShowExportModal(false); setSelectedChapters(new Set()); setExportKind('full'); setExportFormat('docx'); }}>
           <div className="bg-white rounded-xl p-6 w-full max-w-lg shadow-lg" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-bold mb-4">导出大纲</h3>
+            <h3 className="text-lg font-bold mb-4">导出作品</h3>
             <div className="space-y-4">
-              {/* 导出范围 */}
+              {/* 导出内容 */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">导出内容</label>
+                <div className="grid grid-cols-1 gap-2">
+                  <button onClick={() => setExportKind('outline')}
+                    className={`text-left px-3 py-3 rounded-lg border transition ${
+                      exportKind === 'outline'
+                        ? 'border-gray-900 bg-gray-50'
+                        : 'border-gray-200 hover:border-gray-400'
+                    }`}>
+                    <div className="text-sm font-medium text-gray-900">大纲导出</div>
+                    <p className="text-xs text-gray-500 mt-1">导出故事脉络、卷/单元/章节梗概，不包含正文</p>
+                  </button>
+                  <button onClick={() => setExportKind('content')}
+                    className={`text-left px-3 py-3 rounded-lg border transition ${
+                      exportKind === 'content'
+                        ? 'border-gray-900 bg-gray-50'
+                        : 'border-gray-200 hover:border-gray-400'
+                    }`}>
+                    <div className="text-sm font-medium text-gray-900">正文导出</div>
+                    <p className="text-xs text-gray-500 mt-1">导出已定稿章节正文，适合交付、审阅和归档</p>
+                  </button>
+                  <button onClick={() => setExportKind('full')}
+                    className={`text-left px-3 py-3 rounded-lg border transition ${
+                      exportKind === 'full'
+                        ? 'border-gray-900 bg-gray-50'
+                        : 'border-gray-200 hover:border-gray-400'
+                    }`}>
+                    <div className="text-sm font-medium text-gray-900">完整导出</div>
+                    <p className="text-xs text-gray-500 mt-1">同时导出大纲与已定稿正文，适合全书交付和备份</p>
+                  </button>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">导出范围</label>
                 <div className="flex gap-2">
@@ -648,7 +821,7 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
                         ? 'bg-gray-900 text-white border-2 border-gray-900'
                         : 'border-2 border-gray-200 text-gray-500 hover:border-gray-400'
                     }`}>
-                    选择导出
+                    选择章节
                   </button>
                 </div>
               </div>
@@ -679,19 +852,27 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
                     }`}>
                     DOCX
                   </button>
-                  <button onClick={() => setExportFormat('pdf')}
+                  <button onClick={() => setExportFormat('folder')}
+                    disabled={exportKind === 'outline'}
                     className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${
-                      exportFormat === 'pdf'
+                      exportFormat === 'folder'
                         ? 'bg-gray-900 text-white border-2 border-gray-900'
                         : 'border-2 border-gray-200 text-gray-500 hover:border-gray-400'
-                    }`}>
-                    PDF（VIP）
+                    } ${exportKind === 'outline' ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                    文件夹
                   </button>
                 </div>
+                <p className="text-xs text-gray-400 mt-2">
+                  {exportKind === 'outline'
+                    ? '仅大纲导出当前支持 DOCX，适合结构审阅'
+                    : exportKind === 'content'
+                      ? '正文导出推荐 DOCX；文件夹导出会按卷/单元输出章节文本'
+                      : '完整导出可用 DOCX 或文件夹，适合全书交付与备份'}
+                </p>
               </div>
             </div>
             <div className="flex gap-3 mt-6">
-              <button onClick={() => { setShowExportModal(false); setSelectedChapters(new Set()); }}
+              <button onClick={() => { setShowExportModal(false); setSelectedChapters(new Set()); setExportKind('full'); setExportFormat('docx'); }}
                 className="px-4 py-2 text-gray-600 hover:text-gray-900">取消</button>
               <button onClick={handleExport} disabled={exporting}
                 className="flex-1 py-2 bg-gray-900 text-white rounded-lg font-medium hover:bg-gray-800 transition disabled:opacity-50">
@@ -702,60 +883,16 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
         </div>
       )}
 
-      <ChatPanel open={chatOpen} onClose={() => { setChatOpen(false); setChatContext(null); }}
-        projectId={projectId} conversationType="outline"
-        roleKey={chatContext?.roleKey as 'editor' | 'writer' ?? 'editor'}
-        title={chatContext?.roleKey === 'writer' ? 'AI 章节创作' : 'AI 构思'}
-        fullOutline={outlineTree}
-        storyNarrative={storyNarrative}
-        customContextPrompt={chatContext?.contextPrompt}
-        onNavigateToSettings={() => {
-          window.location.href = `/project/${projectId}/settings`;
-        }}
-        onNavigateToOutline={() => {
-          // 已在大纲页面，关闭对话框即可
-          setChatOpen(false);
-          setChatContext(null);
-        }}
-        onNavigateToChapter={() => {
-          // 跳转到正文创作工作台（最近的章节或第一个章节）
-          const firstCh = outlineTree?.[0]?.units?.[0]?.chapters?.[0];
-          if (firstCh) {
-            window.location.href = `/project/${projectId}/chapter/${firstCh.id}`;
-          } else {
-            window.location.href = `/project/${projectId}/chapters`;
-          }
-        }}
-        onActionConfirmed={(type, entity: unknown) => {
-          utils.project.listVolumes.invalidate({ projectId });
-          utils.project.listUnits.invalidate();
-          utils.project.listChapters.invalidate();
-
-          // 自动展开新创建的项目，确保用户能立即看到内容
-          const e = entity as { id?: string } | undefined;
-          if (!e?.id) return;
-          if (type === 'volume') {
-            setExpandedVolumes(prev => {
-              const next = new Set(prev);
-              next.add(e.id!);
-              return next;
-            });
-          } else if (type === 'unit') {
-            setExpandedUnits(prev => {
-              const next = new Set(prev);
-              next.add(e.id!);
-              return next;
-            });
-          }
-        }} />
-
       {/* AI 修改 ChatPanel */}
       <ChatPanel open={aiEditChatOpen} onClose={() => { setAiEditChatOpen(false); setAiEditEntity(null); setChatContext(null); }}
         projectId={projectId} conversationType="outline"
         roleKey={chatContext?.roleKey as 'editor' ?? 'editor'}
         title={`AI 修改 — ${aiEditEntity?.title || ''}`}
+        minimizedTitle="AI 创建梗概"
+        mode="inline"
         fullOutline={outlineTree}
         storyNarrative={storyNarrative}
+        projectSettings={projectSettings}
         customContextPrompt={chatContext?.contextPrompt}
         onNavigateToSettings={() => {
           window.location.href = `/project/${projectId}/settings`;
@@ -776,6 +913,7 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
           utils.project.listVolumes.invalidate({ projectId });
           utils.project.listUnits.invalidate();
           utils.project.listChapters.invalidate();
+          utils.project.getNarrative.invalidate({ projectId });
 
           // 覆盖确认：自动展开对应的卷/单元
           const e = entity as { id?: string } | undefined;
@@ -843,6 +981,24 @@ export default function OutlinePage({ params }: { params: { id: string } }) {
         </div>
       )}
       </main>
+
+      {/* 自动检测：继续创作对话框 */}
+      {continueDialog && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setContinueDialog(null)}>
+          <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-lg" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-bold mb-4">继续创作</h3>
+            <p className="text-sm text-gray-600 mb-2">
+              检测到 {continueDialog.label} 的{continueDialog.type === 'volume' ? '卷梗概' : continueDialog.type === 'unit' ? '单元梗概' : '章节梗概'}尚未完成编辑，是否前往继续创作？
+            </p>
+            <div className="flex gap-3 mt-6">
+              <button onClick={() => setContinueDialog(null)}
+                className="px-4 py-2 text-gray-600 hover:text-gray-900">暂不</button>
+              <button onClick={handleContinueEditing}
+                className="flex-1 py-2 bg-amber-500 text-white rounded-lg font-medium hover:bg-amber-600 transition">继续创作</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -976,7 +1132,7 @@ function VolumeItem({ vol, projectId, expanded, onToggle, expandedUnits, toggleU
   };
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200">
+    <div id={`volume-${vol.id}`} className="bg-white rounded-xl border border-gray-200">
       <div className="flex items-center">
         <button onClick={onToggle} className="flex-1 text-left px-5 py-4 flex items-center justify-between">
           <span className="font-semibold">{vol.title}</span>
@@ -1132,7 +1288,7 @@ function UnitItem({ unit, projectId, volumeId, expanded, onToggle, statusLabel, 
   };
 
   return (
-    <div className="border border-gray-100 rounded-lg">
+    <div id={`unit-${unit.id}`} className="border border-gray-100 rounded-lg">
       <div className="flex items-start">
         <button onClick={onToggle} className="flex-1 text-left px-4 py-3 flex items-center justify-between">
           <div>
@@ -1282,7 +1438,7 @@ function ChapterRow({ ch, projectId, unitId, onAiEdit }: {
   };
 
   return (
-    <div className="px-3 py-2 rounded hover:bg-gray-50 transition group">
+    <div id={`chapter-${ch.id}`} className="px-3 py-2 rounded hover:bg-gray-50 transition group">
       <div className="flex items-center justify-between">
         <Link href={`/project/${projectId}/chapter/${ch.id}`} className="flex-1">
           <span className="text-sm">{ch.title}</span>

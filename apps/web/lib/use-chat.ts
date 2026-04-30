@@ -1,7 +1,43 @@
 // AI 对话状态管理 hook
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { trpc } from '@/lib/trpc';
-import { streamAiChat } from '@/lib/ai-stream';
+import { streamAiChat, streamPlatformAiChat, streamReconnect } from '@/lib/ai-stream';
+
+// 对话恢复数据结构
+interface RecoveryState {
+  conversationId: string;
+  configId: string;
+  roleKey: string;
+  projectId: string;
+  lastUserMessage: string;
+  messageCount: number;
+  timestamp: number;
+  jobId?: string;
+}
+
+function saveRecoveryState(projectId: string, state: RecoveryState) {
+  try {
+    localStorage.setItem(`storyedit_recovery_${projectId}`, JSON.stringify(state));
+  } catch { /* localStorage full or unavailable */ }
+}
+
+function loadRecoveryState(projectId: string): RecoveryState | null {
+  try {
+    const raw = localStorage.getItem(`storyedit_recovery_${projectId}`);
+    if (!raw) return null;
+    const state = JSON.parse(raw) as RecoveryState;
+    // 超过 1 小时的恢复数据视为过期
+    if (Date.now() - state.timestamp > 3600000) {
+      localStorage.removeItem(`storyedit_recovery_${projectId}`);
+      return null;
+    }
+    return state;
+  } catch { return null; }
+}
+
+function clearRecoveryState(projectId: string) {
+  try { localStorage.removeItem(`storyedit_recovery_${projectId}`); } catch { /* noop */ }
+}
 
 export interface ChatMessage {
   id?: string;
@@ -17,6 +53,8 @@ interface UseChatOptions {
   configId: string;
   projectId: string;
   roleKey: string;
+  /** 平台Token模式：模型ID（使用平台Token计费，而非用户自有API Key） */
+  model?: string;
   onActionConfirmed?: (type: string, entity: unknown) => void;
   /** 已存在的卷列表，用于注入上下文 */
   volumes?: { id: string; title: string; synopsis?: string | null }[];
@@ -32,22 +70,145 @@ interface UseChatOptions {
   customContextPrompt?: string;
   /** L0-L3 创作经验（供 writer 角色参考） */
   experiences?: string;
+  /** 项目设定词条列表（供 editor 角色读取设定信息） */
+  projectSettings?: { id: string; category: string; title: string; content: string }[];
 }
 
-export function useChat({ conversationId, configId, projectId, roleKey, onActionConfirmed, volumes, chapterContext, taskBrief, fullOutline, storyNarrative, customContextPrompt, experiences }: UseChatOptions) {
+export function useChat({ conversationId, configId, projectId, roleKey, model, onActionConfirmed, volumes, chapterContext, taskBrief, fullOutline, storyNarrative, customContextPrompt, experiences, projectSettings }: UseChatOptions) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [confirmedActions, setConfirmedActions] = useState<Set<string>>(new Set());
   const abortRef = useRef(false);
 
+  // 渠道重试状态（供前端显示「正在尝试备用API」提示）
+  const [retryState, setRetryState] = useState<{ reconnecting: boolean; retryCount: number; elapsedMs: number } | null>(null);
+  const retryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const utils = trpc.useUtils();
   const sendMessageMut = trpc.conversation.sendMessage.useMutation();
   const confirmActionMut = trpc.conversation.confirmAction.useMutation();
+
+  // 对话恢复状态
+  const [recoveryState, setRecoveryState] = useState<RecoveryState | null>(null);
+  const [showRecovery, setShowRecovery] = useState(false);
+
+  // 检查是否有可恢复的对话
+  useEffect(() => {
+    if (conversationId || !projectId) return;
+    const saved = loadRecoveryState(projectId);
+    if (saved && saved.roleKey === roleKey) {
+      setRecoveryState(saved);
+      setShowRecovery(true);
+    }
+  }, [projectId, conversationId, roleKey]);
+
+  // 关闭恢复提示
+  const dismissRecovery = useCallback(() => {
+    setShowRecovery(false);
+    if (recoveryState) {
+      clearRecoveryState(recoveryState.projectId);
+      setRecoveryState(null);
+    }
+  }, [recoveryState]);
+
+  // 从后台任务恢复（断线重连）
+  const startReconnect = useCallback(async () => {
+    if (!recoveryState?.jobId || !recoveryState.lastUserMessage) return;
+    const state = recoveryState;
+    dismissRecovery();
+    setStreaming(true);
+
+    let fullResponse = '';
+    let fullThinking = '';
+    let streamError: string | null = null;
+
+    // 添加用户消息到 UI
+    const userMsg: ChatMessage = { role: 'user', content: state.lastUserMessage };
+    setMessages(prev => [...prev, userMsg]);
+
+    // 持久化用户消息
+    try {
+      await sendMessageMut.mutateAsync({
+        conversationId: state.conversationId,
+        role: 'user',
+        content: state.lastUserMessage,
+      });
+    } catch (err) {
+      console.error('[useChat] Failed to persist reconnected user message:', err);
+    }
+
+    const assistantMsg: ChatMessage = { role: 'assistant', content: '', thinking: '' };
+    setMessages(prev => [...prev, assistantMsg]);
+
+    try {
+      for await (const chunk of streamReconnect(state.jobId!)) {
+        if (chunk.error) {
+          streamError = chunk.error;
+          setMessages(prev => {
+            const copy = [...prev];
+            copy[copy.length - 1] = { role: 'assistant', content: `[错误] ${chunk.error}` };
+            return copy;
+          });
+          break;
+        }
+        if (chunk.thinking) {
+          fullThinking += chunk.thinking;
+          setMessages(prev => {
+            const copy = [...prev];
+            copy[copy.length - 1] = { role: 'assistant', content: fullResponse, thinking: fullThinking };
+            return copy;
+          });
+        }
+        if (chunk.content) {
+          fullResponse += chunk.content;
+          setMessages(prev => {
+            const copy = [...prev];
+            copy[copy.length - 1] = { role: 'assistant', content: fullResponse, thinking: fullThinking };
+            return copy;
+          });
+        }
+        if (chunk.done) break;
+      }
+    } catch (err: unknown) {
+      streamError = err instanceof Error ? err.message : '重连失败';
+      setMessages(prev => {
+        const copy = [...prev];
+        copy[copy.length - 1] = { role: 'assistant', content: `[错误] ${streamError}` };
+        return copy;
+      });
+    }
+
+    // 清理重试状态
+    if (retryTimerRef.current) { clearInterval(retryTimerRef.current); retryTimerRef.current = null; }
+    setRetryState(null);
+
+    setStreaming(false);
+
+    // 持久化回复
+    if (fullResponse) {
+      clearRecoveryState(state.projectId);
+      try {
+        await sendMessageMut.mutateAsync({
+          conversationId: state.conversationId,
+          role: 'assistant',
+          content: fullResponse,
+        });
+      } catch (err) {
+        console.error('[useChat] Failed to persist reconnected response:', err);
+      }
+    }
+  }, [recoveryState, dismissRecovery, sendMessageMut, setMessages, setStreaming]);
 
   // Load conversation history
   const { data: convData } = trpc.conversation.get.useQuery(
     { conversationId: conversationId! },
     { enabled: !!conversationId },
+  );
+
+  // 加载近期修改记录（用于 editor 和 setting_editor 角色）
+  const { data: editLogs } = trpc.project.listEditLogs.useQuery(
+    { projectId, limit: 10 },
+    { enabled: (roleKey === 'editor' || roleKey === 'setting_editor') && !!conversationId },
   );
 
   // Sync loaded messages
@@ -76,7 +237,7 @@ export function useChat({ conversationId, configId, projectId, roleKey, onAction
 
     // ===== 优先级 1.5：故事脉络上下文（editor 和 setting_editor） =====
     if (storyNarrative && (roleKey === 'editor' || roleKey === 'setting_editor')) {
-      parts.push('[全书故事脉络 — 已确认的故事总纲]');
+      parts.push('[全书简介（故事脉络）]');
       parts.push(`标题：${storyNarrative.title}`);
       parts.push(storyNarrative.content);
       parts.push('');
@@ -85,6 +246,23 @@ export function useChat({ conversationId, configId, projectId, roleKey, onAction
       } else if (roleKey === 'setting_editor') {
         parts.push('你在搭建设定时必须参考以上故事脉络，确保设定与故事框架一致。');
       }
+    }
+
+    // ===== 优先级 1.6：近期手动修改记录（editor 和 setting_editor） =====
+    if (editLogs && editLogs.length > 0 && (roleKey === 'editor' || roleKey === 'setting_editor')) {
+      parts.push('## 近期手动修改记录');
+      parts.push('（以下是用户近期手动修改过的内容，全局修改时需了解这些局部变更）');
+      editLogs.forEach(log => {
+        const typeLabel = log.entityType === 'volume' ? '卷' : log.entityType === 'unit' ? '单元' : log.entityType === 'chapter' ? '章节' : '设定';
+        const dateStr = log.createdAt ? new Date(log.createdAt).toLocaleDateString('zh-CN') : '';
+        const oldPreview = log.oldValue ? (log.oldValue.length > 50 ? log.oldValue.slice(0, 50) + '...' : log.oldValue) : '（无）';
+        const newPreview = log.newValue ? (log.newValue.length > 50 ? log.newValue.slice(0, 50) + '...' : log.newValue) : '（无）';
+        parts.push(`- [${dateStr}] ${typeLabel} ${log.fieldName} 被修改`);
+        parts.push(`  旧：${oldPreview}`);
+        parts.push(`  新：${newPreview}`);
+        if (log.editReason) parts.push(`  原因：${log.editReason}`);
+      });
+      parts.push('');
     }
 
     // ===== 优先级 2：writer 角色 — 使用任务书作为唯一剧情指导 =====
@@ -135,22 +313,46 @@ export function useChat({ conversationId, configId, projectId, roleKey, onAction
       return parts.join('\n');
     }
 
-    // ===== 优先级 3：editor 角色 — 注入完整的卷/单元/章节信息 =====
+    // ===== 优先级 3：editor 角色 — 注入项目设定词条 =====
+    if (roleKey === 'editor' && projectSettings && projectSettings.length > 0) {
+      parts.push('[项目设定词条 — 从设定管理导入]');
+      parts.push('以下是项目中已经创建好的设定词条。在讨论和创作大纲时必须参考这些设定，确保剧情与设定一致。');
+      const cats = [...new Set(projectSettings.map(s => s.category))];
+      cats.forEach(cat => {
+        parts.push(`\n## 类目：${cat}`);
+        const catSettings = projectSettings.filter(s => s.category === cat);
+        catSettings.forEach(s => {
+          parts.push(`### ${s.title}`);
+          parts.push(s.content || '（暂无内容）');
+          parts.push('');
+        });
+      });
+      parts.push('');
+    }
+
+    // ===== 优先级 3.1：editor 角色 — 注入完整的卷/单元/章节信息 =====
     if (roleKey === 'editor' && fullOutline && fullOutline.length > 0) {
       parts.push('[已存在的完整大纲结构 — 卷/单元/章节]');
       parts.push('以下是项目中已经创建好的大纲结构。用户说"确认"时，如果对应内容已经存在，不要再重复创建。请根据已有结构继续规划后续内容。');
+      parts.push('注意：方括号中的序号对应 ACTION 中的 volumeIndex/unitIndex，花括号中的 ID 用于 update 指令。');
       fullOutline.forEach((vol, i) => {
-        let volStr = `${i + 1}. 卷「${vol.title}」`;
+        const volIdx = i + 1;
+        let volStr = `${volIdx}. 卷「${vol.title}」[volumeIndex=${volIdx}]`;
+        if (vol.id) volStr += ` {id: ${vol.id.slice(0, 8)}...}`;
         if (vol.synopsis) volStr += ` — ${vol.synopsis}`;
         parts.push(volStr);
         if (vol.units) {
           vol.units.forEach((unit, j) => {
-            let unitStr = `  ${j + 1}. 单元「${unit.title}」`;
+            const unitIdx = j + 1;
+            let unitStr = `  ${unitIdx}. 单元「${unit.title}」[volumeIndex=${volIdx}, unitIndex=${unitIdx}]`;
+            if (unit.id) unitStr += ` {id: ${unit.id.slice(0, 8)}...}`;
             if (unit.synopsis) unitStr += ` — ${unit.synopsis}`;
             parts.push(unitStr);
             if (unit.chapters) {
               unit.chapters.forEach((ch, k) => {
-                let chStr = `    ${k + 1}. 章节「${ch.title}」`;
+                const chIdx = k + 1;
+                let chStr = `    ${chIdx}. 章节「${ch.title}」[volumeIndex=${volIdx}, unitIndex=${unitIdx}, chapterIndex=${chIdx}]`;
+                if (ch.id) chStr += ` {id: ${ch.id.slice(0, 8)}...}`;
                 if (ch.synopsis) chStr += ` — ${ch.synopsis}`;
                 parts.push(chStr);
               });
@@ -160,6 +362,7 @@ export function useChat({ conversationId, configId, projectId, roleKey, onAction
       });
       parts.push('');
       parts.push('如果用户要求创建新的卷/单元/章节，请按正常流程输出 ACTION 块。');
+      parts.push('如果用户要求修改已有的卷/单元/章节，请使用 update 指令并带上对应的 id 字段。');
       parts.push('如果用户只是在已有的大纲基础上继续规划，请直接基于现有内容进行创作。');
     } else if (roleKey === 'editor' && volumes && volumes.length > 0) {
       // 回退：如果没有 fullOutline 但有 volumes 列表
@@ -202,7 +405,7 @@ export function useChat({ conversationId, configId, projectId, roleKey, onAction
     }
 
     return parts.join('\n');
-  }, [roleKey, volumes, chapterContext, taskBrief, fullOutline, storyNarrative, customContextPrompt, experiences]);
+  }, [roleKey, volumes, chapterContext, taskBrief, fullOutline, storyNarrative, customContextPrompt, experiences, editLogs, projectSettings]);
 
   const sendMessage = useCallback(async (content: string) => {
     if (!conversationId || streaming) return;
@@ -230,53 +433,20 @@ export function useChat({ conversationId, configId, projectId, roleKey, onAction
     const systemPrompt = convData?.messages?.find((m: { role: string }) => m.role === 'system')?.content || '';
     const contextMsg = buildContextMessage();
 
-    // 构建完整消息数组用于调试
-    const debugHistory: { role: string; content: string }[] = [
-      { role: 'system', content: systemPrompt },
-    ];
-    if (roleKey === 'writer' && contextMsg) {
-      debugHistory.push({ role: 'system', content: contextMsg });
-    }
-    debugHistory.push(
-      ...messages.map(m => ({ role: m.role as string, content: m.content })),
-      { role: 'user', content },
-    );
-
-    // DEBUG: 输出实际发送给 AI 的消息结构（打开浏览器控制台查看）
-    if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
-      console.log('=================== [useChat DEBUG] ===================');
-      console.log('[useChat] roleKey:', roleKey);
-      console.log('[useChat] taskBrief 存在:', !!taskBrief);
-      console.log('[useChat] taskBrief 长度:', taskBrief?.length || 0);
-      if (taskBrief) {
-        console.log('[useChat] taskBrief 内容:\n', taskBrief);
-      }
-      console.log('[useChat] contextMsg 存在:', !!contextMsg);
-      console.log('[useChat] contextMsg 长度:', contextMsg?.length || 0);
-      if (contextMsg && contextMsg.length > 1000) {
-        console.log('[useChat] contextMsg 内容:\n', contextMsg);
-      }
-      console.log('[useChat] messages 数量:', messages.length);
-      console.log('[useChat] 发送给 AI 的完整消息数组（共', debugHistory.length, '条）:');
-      debugHistory.forEach((m, i) => {
-        console.log(`  [${i}] role=${m.role}, length=${m.content.length}, preview: ${m.content.slice(0, 80)}`);
-      });
-      const totalChars = debugHistory.reduce((sum, m) => sum + m.content.length, 0);
-      console.log(`[useChat] 总字符数: ${totalChars}（约 ${Math.round(totalChars / 2)} tokens）`);
-      console.log('=====================================================');
-    }
-
     const history: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
       { role: 'system', content: systemPrompt },
     ];
 
     // writer 角色：每次发送消息时都注入章节上下文（确保 AI 能获取最新梗概）
     // setting_editor 角色：每次发送消息时都注入大纲上下文（确保 AI 能读取最新的卷梗概）
-    // editor 角色：仅在首次消息时注入（避免重复上下文）
+    // editor 角色：每次发送消息时都注入设定和大纲上下文（确保 AI 始终有词条信息）
     if (roleKey === 'writer' && contextMsg) {
       history.push({ role: 'system', content: contextMsg });
     } else if (roleKey === 'setting_editor' && contextMsg) {
       // setting_editor 每次都要最新大纲上下文
+      history.push({ role: 'system', content: contextMsg });
+    } else if (roleKey === 'editor' && contextMsg) {
+      // editor 每次都要最新设定和大纲上下文
       history.push({ role: 'system', content: contextMsg });
     } else if (contextMsg && messages.length === 0) {
       history.push({ role: 'system', content: contextMsg });
@@ -320,6 +490,21 @@ ${prevMatch ? `【前情回顾】\n${prevMatch[1]}\n` : ''}${nextMatch ? `【后
 
     // Stream AI response
     setStreaming(true);
+
+    // 保存恢复状态：万一用户关闭页面，可以恢复对话
+    let currentJobId = '';
+    if (projectId && conversationId) {
+      saveRecoveryState(projectId, {
+        conversationId,
+        configId,
+        roleKey,
+        projectId,
+        lastUserMessage: content,
+        messageCount: messages.length,
+        timestamp: Date.now(),
+      });
+    }
+
     abortRef.current = false;
     let fullResponse = '';
     let fullThinking = '';
@@ -328,8 +513,28 @@ ${prevMatch ? `【前情回顾】\n${prevMatch[1]}\n` : ''}${nextMatch ? `【后
     setMessages(prev => [...prev, assistantMsg]);
 
     try {
-      for await (const chunk of streamAiChat({ configId, messages: history, projectId })) {
+      const platformModel = convData?.modelId ?? model;
+      for await (const chunk of platformModel
+        ? streamPlatformAiChat({ model: platformModel, messages: history, projectId, conversationId: conversationId ?? undefined })
+        : streamAiChat({ configId, messages: history, projectId })) {
         if (abortRef.current) break;
+        // 捕获 jobId 以便断线重连
+        if (chunk.jobId) {
+          currentJobId = chunk.jobId;
+          if (projectId && conversationId) {
+            saveRecoveryState(projectId, {
+              conversationId,
+              configId,
+              roleKey,
+              projectId,
+              lastUserMessage: content,
+              messageCount: messages.length,
+              timestamp: Date.now(),
+              jobId: chunk.jobId,
+            });
+          }
+          continue;
+        }
         if (chunk.error) {
           streamError = chunk.error;
           setMessages(prev => {
@@ -346,6 +551,18 @@ ${prevMatch ? `【前情回顾】\n${prevMatch[1]}\n` : ''}${nextMatch ? `【后
             copy[copy.length - 1] = { role: 'assistant', content: fullResponse, thinking: fullThinking };
             return copy;
           });
+          // 渠道重试信号
+          if (chunk.reconnecting) {
+            if (!retryTimerRef.current) {
+              const startTime = Date.now();
+              setRetryState({ reconnecting: true, retryCount: 1, elapsedMs: 0 });
+              retryTimerRef.current = setInterval(() => {
+                setRetryState(prev => prev ? { ...prev, elapsedMs: Date.now() - startTime } : null);
+              }, 500);
+            } else {
+              setRetryState(prev => prev ? { ...prev, retryCount: (prev.retryCount || 0) + 1 } : { reconnecting: true, retryCount: 1, elapsedMs: 0 });
+            }
+          }
         }
         if (chunk.content) {
           fullResponse += chunk.content;
@@ -365,10 +582,16 @@ ${prevMatch ? `【前情回顾】\n${prevMatch[1]}\n` : ''}${nextMatch ? `【后
       });
     }
 
+    // 清理重试状态
+    if (retryTimerRef.current) { clearInterval(retryTimerRef.current); retryTimerRef.current = null; }
+    setRetryState(null);
+
     setStreaming(false);
 
     // Persist assistant response
     if (fullResponse) {
+      // 回复成功，清除恢复状态
+      if (projectId) clearRecoveryState(projectId);
       try {
         await sendMessageMut.mutateAsync({
           conversationId, role: 'assistant', content: fullResponse,
@@ -395,26 +618,36 @@ ${prevMatch ? `【前情回顾】\n${prevMatch[1]}\n` : ''}${nextMatch ? `【后
         return copy;
       });
     }
-  }, [conversationId, streaming, messages, convData, configId, projectId, sendMessageMut, buildContextMessage, chapterContext, taskBrief, fullOutline]);
+  }, [conversationId, streaming, messages, convData, configId, projectId, sendMessageMut, buildContextMessage, chapterContext, taskBrief, model, roleKey]);
 
   const confirmAction = useCallback(async (actionType: string, payload: Record<string, unknown>) => {
-    if (!conversationId) return;
-    const result = await confirmActionMut.mutateAsync({
-      conversationId, actionType, payload,
-    });
-    const key = `${actionType}:${JSON.stringify(payload)}`;
-    setConfirmedActions(prev => new Set(prev).add(key));
-    try {
-      onActionConfirmed?.(result.type, result.entity);
-    } catch (err) {
-      console.error('[useChat] onActionConfirmed error:', err);
+    if (!conversationId) {
+      console.error('[useChat] confirmAction 失败: conversationId 为空');
+      return;
     }
-    utils.conversation.get.invalidate({ conversationId });
-    // After action confirm, also invalidate the conversation list (in case target entity changed)
-    utils.conversation.list.invalidate();
+    try {
+      const result = await confirmActionMut.mutateAsync({
+        conversationId, actionType, payload,
+      });
+      const key = `${actionType}:${JSON.stringify(payload)}`;
+      setConfirmedActions(prev => new Set(prev).add(key));
+      try {
+        await onActionConfirmed?.(result.type, result.entity);
+      } catch (err) {
+        console.error('[useChat] onActionConfirmed error:', err);
+      }
+      utils.conversation.get.invalidate({ conversationId });
+      utils.conversation.list.invalidate();
+    } catch (err) {
+      console.error('[useChat] confirmAction 调用失败:', err);
+      throw err; // 重新抛出，让 ActionCard 显示错误信息
+    }
   }, [conversationId, confirmActionMut, onActionConfirmed, utils]);
 
   const stopStreaming = useCallback(() => { abortRef.current = true; }, []);
 
-  return { messages, streaming, confirmedActions, sendMessage, confirmAction, stopStreaming };
+  // 有效模型：优先使用对话锁定的模型，其次使用传入的平台模型参数
+  const effectiveModel = convData?.modelId ?? model ?? null;
+
+  return { messages, streaming, confirmedActions, sendMessage, confirmAction, stopStreaming, recoveryState: showRecovery ? recoveryState : null, dismissRecovery, startReconnect, modelId: effectiveModel, retryState };
 }

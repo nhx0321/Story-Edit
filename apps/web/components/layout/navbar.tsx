@@ -78,15 +78,7 @@ export function Navbar() {
     ? projects.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0]?.id
     : undefined;
 
-  // VIP 订阅状态
-  const { data: billingStatus } = trpc.billing.getStatus.useQuery(undefined, {
-    enabled: !!user,
-    refetchOnWindowFocus: false,
-  });
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  useEffect(() => { setMounted(true); }, []);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -101,19 +93,6 @@ export function Navbar() {
   // Don't show navbar on login/register pages
   const hideNavbar = mounted && (pathname === '/login' || pathname === '/register');
   if (hideNavbar) return null;
-
-  // 计算剩余 VIP 天数（基于 billing 状态）
-  const vipRemainingDays = (() => {
-    // Premium VIP: 直接从 subscriptions.currentPeriodEnd 计算
-    if (billingStatus?.tier === 'premium') {
-      return (billingStatus as any)?.premiumDaysLeft ?? 0;
-    }
-    // 试用期
-    if (billingStatus?.tier === 'trial') {
-      return billingStatus.trialDaysLeft ?? 0;
-    }
-    return 0;
-  })();
 
   return (
     <nav className="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm" data-guide-target="navbar" suppressHydrationWarning>
@@ -155,10 +134,6 @@ export function Navbar() {
                     className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
                     意见反馈
                   </button>
-                  <Link href="/help" onClick={() => setAccountOpen(false)}
-                    className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
-                    使用帮助
-                  </Link>
                   <Link href="/settings/profile" onClick={() => setAccountOpen(false)}
                     className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50">
                     个人信息

@@ -1,0 +1,618 @@
+admin_audit_logs	id	uuid	uuid	NO	gen_random_uuid()
+admin_audit_logs	admin_id	uuid	uuid	NO	
+admin_audit_logs	admin_level	integer	int4	YES	
+admin_audit_logs	action	character varying	varchar	NO	
+admin_audit_logs	target_type	character varying	varchar	YES	
+admin_audit_logs	target_id	uuid	uuid	YES	
+admin_audit_logs	details	jsonb	jsonb	YES	
+admin_audit_logs	created_at	timestamp without time zone	timestamp	NO	now()
+ai_configs	id	uuid	uuid	NO	gen_random_uuid()
+ai_configs	user_id	uuid	uuid	NO	
+ai_configs	provider	USER-DEFINED	ai_provider	NO	
+ai_configs	name	character varying	varchar	NO	
+ai_configs	api_key_encrypted	text	text	NO	
+ai_configs	base_url	text	text	YES	
+ai_configs	default_model	character varying	varchar	YES	
+ai_configs	is_active	boolean	bool	YES	true
+ai_configs	created_at	timestamp without time zone	timestamp	NO	now()
+ai_configs	is_default	boolean	bool	YES	false
+ai_roles	id	uuid	uuid	NO	gen_random_uuid()
+ai_roles	project_id	uuid	uuid	NO	
+ai_roles	name	character varying	varchar	NO	
+ai_roles	role	character varying	varchar	NO	
+ai_roles	system_prompt	text	text	NO	
+ai_roles	is_default	boolean	bool	YES	false
+ai_roles	created_at	timestamp without time zone	timestamp	NO	now()
+ai_usage_logs	id	uuid	uuid	NO	gen_random_uuid()
+ai_usage_logs	user_id	uuid	uuid	NO	
+ai_usage_logs	project_id	uuid	uuid	YES	
+ai_usage_logs	provider	USER-DEFINED	ai_provider	NO	
+ai_usage_logs	model	character varying	varchar	NO	
+ai_usage_logs	prompt_tokens	integer	int4	NO	0
+ai_usage_logs	completion_tokens	integer	int4	NO	0
+ai_usage_logs	total_tokens	integer	int4	NO	0
+ai_usage_logs	created_at	timestamp without time zone	timestamp	NO	now()
+api_channels	id	uuid	uuid	NO	gen_random_uuid()
+api_channels	provider	character varying	varchar	NO	
+api_channels	name	character varying	varchar	YES	
+api_channels	api_key_encrypted	text	text	NO	
+api_channels	base_url	character varying	varchar	YES	
+api_channels	priority	integer	int4	YES	0
+api_channels	max_concurrency	integer	int4	YES	10
+api_channels	weight	integer	int4	YES	1
+api_channels	status	character varying	varchar	YES	'active'::character varying
+api_channels	daily_limit	bigint	int8	YES	5000000
+api_channels	daily_used	bigint	int8	YES	0
+api_channels	daily_reset_at	timestamp without time zone	timestamp	YES	
+api_channels	user_tier	character varying	varchar	YES	'all'::character varying
+api_channels	last_error_at	timestamp without time zone	timestamp	YES	
+api_channels	last_error_message	text	text	YES	
+api_channels	created_at	timestamp without time zone	timestamp	YES	now()
+api_channels	updated_at	timestamp without time zone	timestamp	YES	now()
+art_assets	id	uuid	uuid	NO	gen_random_uuid()
+art_assets	category	character varying	varchar	NO	
+art_assets	subcategory	character varying	varchar	YES	
+art_assets	asset_key	character varying	varchar	NO	
+art_assets	name	character varying	varchar	NO	
+art_assets	description	text	text	YES	
+art_assets	file_format	character varying	varchar	YES	
+art_assets	width	integer	int4	YES	
+art_assets	height	integer	int4	YES	
+art_assets	file_size	integer	int4	YES	
+art_assets	storage_path	text	text	NO	
+art_assets	cdn_url	text	text	YES	
+art_assets	is_published	boolean	bool	YES	false
+art_assets	is_active	boolean	bool	YES	true
+art_assets	version	integer	int4	YES	1
+art_assets	replaced_by	uuid	uuid	YES	
+art_assets	created_by	uuid	uuid	YES	
+art_assets	updated_by	uuid	uuid	YES	
+art_assets	published_at	timestamp without time zone	timestamp	YES	
+art_assets	created_at	timestamp without time zone	timestamp	NO	now()
+art_assets	updated_at	timestamp without time zone	timestamp	NO	now()
+chapter_analysis	id	uuid	uuid	NO	gen_random_uuid()
+chapter_analysis	project_id	uuid	uuid	NO	
+chapter_analysis	chapter_id	uuid	uuid	NO	
+chapter_analysis	user_id	uuid	uuid	NO	
+chapter_analysis	type	character varying	varchar	NO	
+chapter_analysis	status	character varying	varchar	NO	'pending'::character varying
+chapter_analysis	job_id	character varying	varchar	YES	
+chapter_analysis	result	text	text	YES	
+chapter_analysis	progress	integer	int4	YES	0
+chapter_analysis	error_message	text	text	YES	
+chapter_analysis	dismissed	boolean	bool	NO	false
+chapter_analysis	metadata	jsonb	jsonb	YES	'{}'::jsonb
+chapter_analysis	created_at	timestamp without time zone	timestamp	YES	now()
+chapter_analysis	updated_at	timestamp without time zone	timestamp	YES	now()
+chapter_versions	id	uuid	uuid	NO	gen_random_uuid()
+chapter_versions	chapter_id	uuid	uuid	NO	
+chapter_versions	content	text	text	NO	
+chapter_versions	version_number	integer	int4	NO	1
+chapter_versions	is_final	boolean	bool	YES	false
+chapter_versions	word_count	integer	int4	YES	0
+chapter_versions	created_at	timestamp without time zone	timestamp	NO	now()
+chapter_versions	parent_version_id	uuid	uuid	YES	
+chapter_versions	sub_version_number	integer	int4	YES	0
+chapter_versions	status	character varying	varchar	YES	'active'::character varying
+chapter_versions	label	character varying	varchar	YES	
+chapter_versions	source_chapter_id	uuid	uuid	YES	
+chapter_versions	version_type	character varying	varchar	YES	'draft'::character varying
+chapter_versions	deleted_at	timestamp without time zone	timestamp	YES	
+chapters	id	uuid	uuid	NO	gen_random_uuid()
+chapters	unit_id	uuid	uuid	NO	
+chapters	title	character varying	varchar	NO	
+chapters	sort_order	integer	int4	NO	0
+chapters	synopsis	text	text	YES	
+chapters	status	character varying	varchar	YES	'draft'::character varying
+chapters	created_at	timestamp without time zone	timestamp	NO	now()
+chapters	updated_at	timestamp without time zone	timestamp	NO	now()
+chapters	deleted_at	timestamp without time zone	timestamp	YES	
+character_states	id	uuid	uuid	NO	gen_random_uuid()
+character_states	project_id	uuid	uuid	NO	
+character_states	character_name	character varying	varchar	NO	
+character_states	chapter_id	uuid	uuid	YES	
+character_states	state	jsonb	jsonb	NO	
+character_states	created_at	timestamp without time zone	timestamp	NO	now()
+checkin_records	id	uuid	uuid	NO	gen_random_uuid()
+checkin_records	user_id	uuid	uuid	NO	
+checkin_records	checkin_date	timestamp without time zone	timestamp	NO	
+checkin_records	days_to_next_reward	integer	int4	YES	0
+checkin_records	created_at	timestamp without time zone	timestamp	NO	now()
+content_fingerprints	id	uuid	uuid	NO	gen_random_uuid()
+content_fingerprints	template_id	uuid	uuid	NO	
+content_fingerprints	fingerprint_hash	character varying	varchar	NO	
+content_fingerprints	fingerprint_dec	bigint	int8	NO	
+content_fingerprints	created_at	timestamp without time zone	timestamp	YES	now()
+conversation_messages	id	uuid	uuid	NO	gen_random_uuid()
+conversation_messages	conversation_id	uuid	uuid	NO	
+conversation_messages	role	character varying	varchar	NO	
+conversation_messages	content	text	text	NO	
+conversation_messages	action_type	character varying	varchar	YES	
+conversation_messages	action_payload	jsonb	jsonb	YES	
+conversation_messages	token_count	integer	int4	YES	0
+conversation_messages	sort_order	integer	int4	NO	0
+conversation_messages	created_at	timestamp without time zone	timestamp	NO	now()
+conversations	id	uuid	uuid	NO	gen_random_uuid()
+conversations	project_id	uuid	uuid	NO	
+conversations	type	USER-DEFINED	conversation_type	NO	
+conversations	title	character varying	varchar	NO	
+conversations	target_entity_id	uuid	uuid	YES	
+conversations	target_entity_type	character varying	varchar	YES	
+conversations	role_key	character varying	varchar	NO	
+conversations	workflow_step_id	character varying	varchar	YES	
+conversations	status	character varying	varchar	YES	'active'::character varying
+conversations	metadata	jsonb	jsonb	YES	
+conversations	created_at	timestamp without time zone	timestamp	NO	now()
+conversations	updated_at	timestamp without time zone	timestamp	NO	now()
+conversations	model_id	character varying	varchar	YES	
+disclaimers	id	uuid	uuid	NO	gen_random_uuid()
+disclaimers	title	text	text	NO	'模板发布免责声明'::text
+disclaimers	content	text	text	NO	
+disclaimers	version	integer	int4	NO	1
+disclaimers	is_active	boolean	bool	NO	true
+disclaimers	created_at	timestamp without time zone	timestamp	NO	now()
+disclaimers	updated_at	timestamp without time zone	timestamp	NO	now()
+edit_logs	id	uuid	uuid	NO	gen_random_uuid()
+edit_logs	project_id	uuid	uuid	NO	
+edit_logs	entity_type	character varying	varchar	NO	
+edit_logs	entity_id	uuid	uuid	NO	
+edit_logs	field_name	character varying	varchar	NO	
+edit_logs	old_value	text	text	YES	
+edit_logs	new_value	text	text	YES	
+edit_logs	edit_reason	text	text	YES	
+edit_logs	ai_role	character varying	varchar	YES	
+edit_logs	created_at	timestamp without time zone	timestamp	NO	now()
+feedbacks	id	uuid	uuid	NO	gen_random_uuid()
+feedbacks	user_id	uuid	uuid	NO	
+feedbacks	type	character varying	varchar	NO	'feedback'::character varying
+feedbacks	title	character varying	varchar	NO	
+feedbacks	content	text	text	NO	
+feedbacks	screenshot	text	text	YES	
+feedbacks	status	USER-DEFINED	feedback_status	NO	'pending'::feedback_status
+feedbacks	admin_reply	text	text	YES	
+feedbacks	replied_at	timestamp with time zone	timestamptz	YES	
+feedbacks	created_at	timestamp with time zone	timestamptz	NO	now()
+feedbacks	updated_at	timestamp with time zone	timestamptz	NO	now()
+foreshadows	id	uuid	uuid	NO	gen_random_uuid()
+foreshadows	project_id	uuid	uuid	NO	
+foreshadows	title	character varying	varchar	NO	
+foreshadows	description	text	text	YES	
+foreshadows	planted_chapter_id	uuid	uuid	YES	
+foreshadows	resolved_chapter_id	uuid	uuid	YES	
+foreshadows	status	character varying	varchar	YES	'planted'::character varying
+foreshadows	created_at	timestamp without time zone	timestamp	NO	now()
+genre_presets	id	uuid	uuid	NO	gen_random_uuid()
+genre_presets	genre	USER-DEFINED	genre	NO	
+genre_presets	agent_role	character varying	varchar	NO	
+genre_presets	system_prompt	text	text	NO	
+genre_presets	description	text	text	YES	
+genre_presets	sort_order	integer	int4	YES	0
+genre_presets	created_at	timestamp without time zone	timestamp	NO	now()
+genre_presets	updated_at	timestamp without time zone	timestamp	NO	now()
+genre_presets	category	character varying	varchar	YES	
+genre_presets	style_prompt	text	text	YES	
+genre_presets	project_type	character varying	varchar	YES	'webnovel'::character varying
+inventory_items	id	uuid	uuid	NO	gen_random_uuid()
+inventory_items	project_id	uuid	uuid	NO	
+inventory_items	character_id	character varying	varchar	YES	
+inventory_items	name	character varying	varchar	NO	
+inventory_items	quantity	integer	int4	YES	1
+inventory_items	status	character varying	varchar	YES	'active'::character varying
+inventory_items	last_mentioned_chapter_id	uuid	uuid	YES	
+inventory_items	created_at	timestamp without time zone	timestamp	NO	now()
+inventory_items	updated_at	timestamp without time zone	timestamp	NO	now()
+memory_entries	id	uuid	uuid	NO	gen_random_uuid()
+memory_entries	project_id	uuid	uuid	NO	
+memory_entries	level	USER-DEFINED	memory_level	NO	
+memory_entries	category	character varying	varchar	YES	
+memory_entries	content	text	text	NO	
+memory_entries	source_chapter_id	uuid	uuid	YES	
+memory_entries	is_active	boolean	bool	YES	true
+memory_entries	created_at	timestamp without time zone	timestamp	NO	now()
+memory_entries	updated_at	timestamp without time zone	timestamp	NO	now()
+memory_entries	update_count	integer	int4	NO	1
+model_pricing	id	uuid	uuid	NO	gen_random_uuid()
+model_pricing	provider	character varying	varchar	NO	
+model_pricing	model_id	character varying	varchar	NO	
+model_pricing	model_name	character varying	varchar	NO	
+model_pricing	group_name	character varying	varchar	YES	'default'::character varying
+model_pricing	input_price_per_1m	bigint	int8	NO	
+model_pricing	output_price_per_1m	bigint	int8	NO	
+model_pricing	currency	character varying	varchar	YES	'CNY'::character varying
+model_pricing	is_active	boolean	bool	YES	true
+model_pricing	sort_order	integer	int4	YES	0
+model_pricing	created_at	timestamp without time zone	timestamp	YES	now()
+notifications	id	uuid	uuid	NO	gen_random_uuid()
+notifications	user_id	uuid	uuid	NO	
+notifications	title	character varying	varchar	NO	
+notifications	content	text	text	NO	
+notifications	is_read	boolean	bool	NO	false
+notifications	feedback_id	uuid	uuid	YES	
+notifications	created_at	timestamp with time zone	timestamptz	NO	now()
+outline_versions	id	uuid	uuid	NO	gen_random_uuid()
+outline_versions	entity_type	character varying	varchar	NO	
+outline_versions	entity_id	uuid	uuid	NO	
+outline_versions	synopsis	text	text	NO	
+outline_versions	version_number	integer	int4	NO	1
+outline_versions	deleted_at	timestamp without time zone	timestamp	YES	
+outline_versions	created_at	timestamp without time zone	timestamp	NO	now()
+password_reset_tokens	id	uuid	uuid	NO	gen_random_uuid()
+password_reset_tokens	user_id	uuid	uuid	NO	
+password_reset_tokens	token	character varying	varchar	NO	
+password_reset_tokens	expires_at	timestamp without time zone	timestamp	NO	
+password_reset_tokens	used_at	timestamp without time zone	timestamp	YES	
+password_reset_tokens	created_at	timestamp without time zone	timestamp	NO	now()
+projects	id	uuid	uuid	NO	gen_random_uuid()
+projects	user_id	uuid	uuid	NO	
+projects	name	character varying	varchar	NO	
+projects	type	USER-DEFINED	project_type	NO	'novel'::project_type
+projects	genre	character varying	varchar	YES	
+projects	style	character varying	varchar	YES	
+projects	methodology	character varying	varchar	YES	
+projects	config	jsonb	jsonb	YES	
+projects	created_at	timestamp without time zone	timestamp	NO	now()
+projects	updated_at	timestamp without time zone	timestamp	NO	now()
+projects	status	character varying	varchar	YES	'active'::character varying
+projects	deleted_at	timestamp without time zone	timestamp	YES	
+projects	genre_tag	character varying	varchar	YES	
+projects	writing_style	jsonb	jsonb	YES	'{}'::jsonb
+quality_reports	id	uuid	uuid	NO	gen_random_uuid()
+quality_reports	chapter_version_id	uuid	uuid	NO	
+quality_reports	check_results	jsonb	jsonb	YES	
+quality_reports	score	integer	int4	YES	
+quality_reports	created_at	timestamp without time zone	timestamp	NO	now()
+recharge_orders	id	uuid	uuid	NO	gen_random_uuid()
+recharge_orders	user_id	uuid	uuid	NO	
+recharge_orders	amount_cents	integer	int4	NO	
+recharge_orders	bean_amount	integer	int4	NO	
+recharge_orders	payment_method	character varying	varchar	YES	
+recharge_orders	status	character varying	varchar	YES	'pending'::character varying
+recharge_orders	transaction_id	character varying	varchar	YES	
+recharge_orders	created_at	timestamp without time zone	timestamp	YES	now()
+recharge_orders	updated_at	timestamp without time zone	timestamp	YES	now()
+referral_records	id	uuid	uuid	NO	gen_random_uuid()
+referral_records	referrer_id	uuid	uuid	NO	
+referral_records	referred_id	uuid	uuid	NO	
+referral_records	reward_days	integer	int4	YES	3
+referral_records	created_at	timestamp without time zone	timestamp	NO	now()
+setting_relationships	id	uuid	uuid	NO	gen_random_uuid()
+setting_relationships	project_id	uuid	uuid	NO	
+setting_relationships	source_id	uuid	uuid	NO	
+setting_relationships	target_id	uuid	uuid	NO	
+setting_relationships	relation_type	character varying	varchar	NO	
+setting_relationships	description	text	text	YES	
+setting_relationships	created_at	timestamp without time zone	timestamp	NO	now()
+settings	id	uuid	uuid	NO	gen_random_uuid()
+settings	project_id	uuid	uuid	NO	
+settings	category	character varying	varchar	NO	
+settings	title	character varying	varchar	NO	
+settings	content	text	text	NO	
+settings	sort_order	integer	int4	YES	0
+settings	created_at	timestamp without time zone	timestamp	NO	now()
+settings	updated_at	timestamp without time zone	timestamp	NO	now()
+settings	deleted_at	timestamp without time zone	timestamp	YES	
+settings_deliveries	id	uuid	uuid	NO	gen_random_uuid()
+settings_deliveries	project_id	uuid	uuid	NO	
+settings_deliveries	title	text	text	NO	
+settings_deliveries	content	jsonb	jsonb	NO	
+settings_deliveries	conversation_id	uuid	uuid	YES	
+settings_deliveries	created_by	uuid	uuid	YES	
+settings_deliveries	created_at	timestamp with time zone	timestamptz	YES	now()
+sprite_ai_tasks	id	uuid	uuid	NO	gen_random_uuid()
+sprite_ai_tasks	entry_id	uuid	uuid	NO	
+sprite_ai_tasks	species	character varying	varchar	NO	
+sprite_ai_tasks	variant	character varying	varchar	NO	
+sprite_ai_tasks	level	integer	int4	NO	
+sprite_ai_tasks	task_type	USER-DEFINED	sprite_ai_task_type	NO	
+sprite_ai_tasks	input	text	text	NO	
+sprite_ai_tasks	status	USER-DEFINED	sprite_ai_task_status	NO	'pending'::sprite_ai_task_status
+sprite_ai_tasks	result	text	text	YES	
+sprite_ai_tasks	error_message	text	text	YES	
+sprite_ai_tasks	created_at	timestamp without time zone	timestamp	NO	now()
+sprite_ai_tasks	updated_at	timestamp without time zone	timestamp	NO	now()
+sprite_ai_tasks	completed_at	timestamp without time zone	timestamp	YES	
+sprite_bean_transactions	id	uuid	uuid	NO	gen_random_uuid()
+sprite_bean_transactions	user_id	uuid	uuid	NO	
+sprite_bean_transactions	type	character varying	varchar	NO	
+sprite_bean_transactions	amount	integer	int4	NO	
+sprite_bean_transactions	balance_after	integer	int4	NO	
+sprite_bean_transactions	description	character varying	varchar	YES	
+sprite_bean_transactions	related_type	character varying	varchar	YES	
+sprite_bean_transactions	related_id	character varying	varchar	YES	
+sprite_bean_transactions	created_at	timestamp without time zone	timestamp	YES	now()
+sprite_conversations	id	uuid	uuid	NO	gen_random_uuid()
+sprite_conversations	user_id	uuid	uuid	NO	
+sprite_conversations	role	character varying	varchar	NO	
+sprite_conversations	content	text	text	NO	
+sprite_conversations	sort_order	integer	int4	NO	0
+sprite_conversations	created_at	timestamp without time zone	timestamp	NO	now()
+sprite_images	id	uuid	uuid	NO	gen_random_uuid()
+sprite_images	species	character varying	varchar	NO	
+sprite_images	variant	character varying	varchar	NO	
+sprite_images	level	integer	int4	NO	
+sprite_images	image_url	text	text	NO	
+sprite_images	prompt_used	text	text	YES	
+sprite_images	is_active	boolean	bool	YES	true
+sprite_images	created_at	timestamp without time zone	timestamp	YES	now()
+sprite_images	asset_id	uuid	uuid	YES	
+sprite_interaction_log	id	uuid	uuid	NO	gen_random_uuid()
+sprite_interaction_log	user_id	uuid	uuid	NO	
+sprite_interaction_log	action_type	character varying	varchar	NO	
+sprite_interaction_log	ai_used	boolean	bool	NO	false
+sprite_interaction_log	token_count	integer	int4	YES	
+sprite_interaction_log	fatigue_level	integer	int4	NO	0
+sprite_interaction_log	created_at	timestamp without time zone	timestamp	NO	now()
+sprite_items	id	uuid	uuid	NO	gen_random_uuid()
+sprite_items	code	character varying	varchar	NO	
+sprite_items	name	character varying	varchar	NO	
+sprite_items	species	character varying	varchar	NO	
+sprite_items	effect_minutes	integer	int4	NO	
+sprite_items	price	integer	int4	NO	
+sprite_items	icon	character varying	varchar	YES	
+sprite_items	is_active	boolean	bool	YES	true
+sprite_items	created_at	timestamp without time zone	timestamp	YES	now()
+sprite_items	description	text	text	YES	''::text
+sprite_text_entries	id	uuid	uuid	NO	gen_random_uuid()
+sprite_text_entries	species	character varying	varchar	NO	
+sprite_text_entries	variant	character varying	varchar	NO	
+sprite_text_entries	level	integer	int4	NO	
+sprite_text_entries	text_type	USER-DEFINED	sprite_text_type	NO	
+sprite_text_entries	trigger_condition	text	text	NO	
+sprite_text_entries	response_text	text	text	NO	
+sprite_text_entries	status	USER-DEFINED	sprite_text_status	NO	'draft'::sprite_text_status
+sprite_text_entries	ai_task_id	uuid	uuid	YES	
+sprite_text_entries	error_message	text	text	YES	
+sprite_text_entries	created_at	timestamp without time zone	timestamp	NO	now()
+sprite_text_entries	updated_at	timestamp without time zone	timestamp	NO	now()
+story_narratives	id	uuid	uuid	NO	gen_random_uuid()
+story_narratives	project_id	uuid	uuid	NO	
+story_narratives	title	text	text	NO	
+story_narratives	content	text	text	NO	
+story_narratives	status	text	text	YES	'active'::text
+story_narratives	created_at	timestamp with time zone	timestamptz	YES	now()
+story_narratives	updated_at	timestamp with time zone	timestamptz	YES	now()
+subscription_orders	id	uuid	uuid	NO	gen_random_uuid()
+subscription_orders	user_id	uuid	uuid	NO	
+subscription_orders	plan	character varying	varchar	NO	
+subscription_orders	amount	integer	int4	NO	
+subscription_orders	payment_method	character varying	varchar	NO	
+subscription_orders	status	character varying	varchar	NO	'pending'::character varying
+subscription_orders	refund_amount	integer	int4	NO	0
+subscription_orders	transaction_id	character varying	varchar	YES	
+subscription_orders	created_at	timestamp without time zone	timestamp	NO	now()
+subscription_orders	updated_at	timestamp without time zone	timestamp	NO	now()
+subscriptions	id	uuid	uuid	NO	gen_random_uuid()
+subscriptions	user_id	uuid	uuid	NO	
+subscriptions	status	USER-DEFINED	subscription_status	NO	'free'::subscription_status
+subscriptions	trial_ends_at	timestamp without time zone	timestamp	YES	
+subscriptions	current_period_start	timestamp without time zone	timestamp	YES	
+subscriptions	current_period_end	timestamp without time zone	timestamp	YES	
+subscriptions	created_at	timestamp without time zone	timestamp	NO	now()
+system_presets	id	uuid	uuid	NO	gen_random_uuid()
+system_presets	category	character varying	varchar	NO	
+system_presets	project_type	character varying	varchar	YES	
+system_presets	title	character varying	varchar	NO	
+system_presets	content	text	text	NO	
+system_presets	description	text	text	YES	
+system_presets	sort_order	integer	int4	YES	0
+system_presets	is_published	boolean	bool	YES	false
+system_presets	created_by	uuid	uuid	YES	
+system_presets	updated_by	uuid	uuid	YES	
+system_presets	created_at	timestamp without time zone	timestamp	NO	now()
+system_presets	updated_at	timestamp without time zone	timestamp	NO	now()
+template_comments	id	uuid	uuid	NO	gen_random_uuid()
+template_comments	template_id	uuid	uuid	NO	
+template_comments	user_id	uuid	uuid	NO	
+template_comments	content	text	text	NO	
+template_comments	parent_comment_id	uuid	uuid	YES	
+template_comments	created_at	timestamp without time zone	timestamp	NO	now()
+template_comments	updated_at	timestamp without time zone	timestamp	NO	now()
+template_likes	id	uuid	uuid	NO	gen_random_uuid()
+template_likes	user_id	uuid	uuid	NO	
+template_likes	template_id	uuid	uuid	NO	
+template_likes	created_at	timestamp without time zone	timestamp	NO	now()
+template_purchases	id	uuid	uuid	NO	gen_random_uuid()
+template_purchases	user_id	uuid	uuid	NO	
+template_purchases	template_id	uuid	uuid	NO	
+template_purchases	price_paid	integer	int4	YES	0
+template_purchases	created_at	timestamp without time zone	timestamp	NO	now()
+template_ratings	id	uuid	uuid	NO	gen_random_uuid()
+template_ratings	user_id	uuid	uuid	NO	
+template_ratings	template_id	uuid	uuid	NO	
+template_ratings	score	integer	int4	NO	
+template_ratings	created_at	timestamp without time zone	timestamp	NO	now()
+template_versions	id	uuid	uuid	NO	gen_random_uuid()
+template_versions	user_template_id	uuid	uuid	NO	
+template_versions	content	text	text	NO	
+template_versions	version_number	integer	int4	NO	1
+template_versions	deleted_at	timestamp without time zone	timestamp	YES	
+template_versions	created_at	timestamp without time zone	timestamp	NO	now()
+templates	id	uuid	uuid	NO	gen_random_uuid()
+templates	title	character varying	varchar	NO	
+templates	description	text	text	YES	
+templates	source	USER-DEFINED	template_source	NO	'official'::template_source
+templates	category	character varying	varchar	YES	
+templates	content	text	text	NO	
+templates	preview	text	text	YES	
+templates	price	integer	int4	YES	0
+templates	tip_amount	integer	int4	YES	0
+templates	uploader_id	uuid	uuid	YES	
+templates	audit_status	USER-DEFINED	template_audit_status	YES	'pending'::template_audit_status
+templates	view_count	integer	int4	YES	0
+templates	import_count	integer	int4	YES	0
+templates	created_at	timestamp without time zone	timestamp	NO	now()
+templates	updated_at	timestamp without time zone	timestamp	NO	now()
+templates	comments_count	integer	int4	YES	0
+templates	likes_count	integer	int4	YES	0
+templates	is_published	boolean	bool	YES	false
+templates	review_reason	text	text	YES	
+templates	deleted_at	timestamp without time zone	timestamp	YES	
+templates	ai_target_role	character varying	varchar	YES	
+token_consumption_logs	id	uuid	uuid	NO	gen_random_uuid()
+token_consumption_logs	user_id	uuid	uuid	NO	
+token_consumption_logs	source	character varying	varchar	NO	
+token_consumption_logs	api_key_id	uuid	uuid	YES	
+token_consumption_logs	provider	character varying	varchar	NO	
+token_consumption_logs	model_id	character varying	varchar	NO	
+token_consumption_logs	request_type	character varying	varchar	YES	
+token_consumption_logs	input_tokens	bigint	int8	YES	0
+token_consumption_logs	output_tokens	bigint	int8	YES	0
+token_consumption_logs	cache_hit_tokens	bigint	int8	YES	0
+token_consumption_logs	cost	bigint	int8	NO	
+token_consumption_logs	request_id	character varying	varchar	YES	
+token_consumption_logs	project_id	uuid	uuid	YES	
+token_consumption_logs	conversation_id	uuid	uuid	YES	
+token_consumption_logs	created_at	timestamp without time zone	timestamp	YES	now()
+token_packages	id	uuid	uuid	NO	gen_random_uuid()
+token_packages	name	character varying	varchar	NO	
+token_packages	type	character varying	varchar	NO	
+token_packages	price_cents	integer	int4	NO	
+token_packages	duration_days	integer	int4	YES	
+token_packages	token_quota	bigint	int8	NO	
+token_packages	model_group	character varying	varchar	NO	
+token_packages	features	jsonb	jsonb	YES	'{}'::jsonb
+token_packages	is_active	boolean	bool	YES	true
+token_packages	first_purchase_price	integer	int4	YES	
+token_packages	sort_order	integer	int4	YES	0
+token_packages	created_at	timestamp without time zone	timestamp	YES	now()
+token_recharge_orders	id	uuid	uuid	NO	gen_random_uuid()
+token_recharge_orders	user_id	uuid	uuid	NO	
+token_recharge_orders	package_id	uuid	uuid	YES	
+token_recharge_orders	amount_cents	integer	int4	NO	
+token_recharge_orders	token_amount	bigint	int8	NO	
+token_recharge_orders	payment_method	character varying	varchar	YES	
+token_recharge_orders	payment_trade_no	character varying	varchar	YES	
+token_recharge_orders	status	character varying	varchar	YES	'pending'::character varying
+token_recharge_orders	paid_at	timestamp without time zone	timestamp	YES	
+token_recharge_orders	created_at	timestamp without time zone	timestamp	YES	now()
+transactions	id	uuid	uuid	NO	gen_random_uuid()
+transactions	user_id	uuid	uuid	NO	
+transactions	type	character varying	varchar	NO	
+transactions	amount	integer	int4	NO	
+transactions	description	character varying	varchar	YES	
+transactions	status	character varying	varchar	YES	'pending'::character varying
+transactions	metadata	jsonb	jsonb	YES	
+transactions	created_at	timestamp without time zone	timestamp	NO	now()
+transactions	bean_type	character varying	varchar	YES	
+units	id	uuid	uuid	NO	gen_random_uuid()
+units	volume_id	uuid	uuid	NO	
+units	title	character varying	varchar	NO	
+units	sort_order	integer	int4	NO	0
+units	synopsis	text	text	YES	
+units	structure	character varying	varchar	YES	'four_act'::character varying
+units	created_at	timestamp without time zone	timestamp	NO	now()
+units	status	character varying	varchar	YES	'active'::character varying
+units	deleted_at	timestamp without time zone	timestamp	YES	
+user_api_keys	id	uuid	uuid	NO	gen_random_uuid()
+user_api_keys	user_id	uuid	uuid	NO	
+user_api_keys	name	character varying	varchar	NO	
+user_api_keys	key_hash	character varying	varchar	NO	
+user_api_keys	key_prefix	character varying	varchar	NO	
+user_api_keys	status	character varying	varchar	YES	'active'::character varying
+user_api_keys	last_used_at	timestamp without time zone	timestamp	YES	
+user_api_keys	expires_at	timestamp without time zone	timestamp	YES	
+user_api_keys	ip_whitelist	ARRAY	_text	YES	
+user_api_keys	rate_limit_per_min	integer	int4	YES	60
+user_api_keys	created_at	timestamp without time zone	timestamp	YES	now()
+user_sprite_items	id	uuid	uuid	NO	gen_random_uuid()
+user_sprite_items	user_id	uuid	uuid	NO	
+user_sprite_items	item_code	character varying	varchar	NO	
+user_sprite_items	quantity	integer	int4	NO	0
+user_sprite_items	created_at	timestamp without time zone	timestamp	YES	now()
+user_sprite_items	updated_at	timestamp without time zone	timestamp	YES	now()
+user_sprites	id	uuid	uuid	NO	gen_random_uuid()
+user_sprites	user_id	uuid	uuid	NO	
+user_sprites	species	character varying	varchar	YES	
+user_sprites	variant	character varying	varchar	YES	
+user_sprites	level	integer	int4	NO	1
+user_sprites	custom_name	character varying	varchar	YES	
+user_sprites	user_nickname	character varying	varchar	YES	
+user_sprites	companion_style	character varying	varchar	YES	'quiet'::character varying
+user_sprites	total_active_days	integer	int4	YES	0
+user_sprites	bonus_days	integer	int4	YES	0
+user_sprites	last_active_date	date	date	YES	
+user_sprites	position_x	integer	int4	YES	20
+user_sprites	position_y	integer	int4	YES	80
+user_sprites	is_hatched	boolean	bool	YES	false
+user_sprites	guide_step	integer	int4	YES	0
+user_sprites	secret_shop_found	boolean	bool	YES	false
+user_sprites	created_at	timestamp without time zone	timestamp	YES	now()
+user_sprites	updated_at	timestamp without time zone	timestamp	YES	now()
+user_sprites	bean_balance	integer	int4	YES	0
+user_sprites	total_bean_spent	integer	int4	YES	0
+user_sprites	converted_days	integer	int4	YES	0
+user_sprites	total_xp	integer	int4	YES	0
+user_sprites	guide_reward_claimed	boolean	bool	YES	false
+user_subscriptions	id	uuid	uuid	NO	gen_random_uuid()
+user_subscriptions	user_id	uuid	uuid	NO	
+user_subscriptions	package_id	uuid	uuid	YES	
+user_subscriptions	status	character varying	varchar	NO	
+user_subscriptions	started_at	timestamp without time zone	timestamp	NO	
+user_subscriptions	expires_at	timestamp without time zone	timestamp	YES	
+user_subscriptions	token_quota_total	bigint	int8	NO	
+user_subscriptions	token_quota_used	bigint	int8	YES	0
+user_subscriptions	auto_renew	boolean	bool	YES	false
+user_subscriptions	created_at	timestamp without time zone	timestamp	YES	now()
+user_templates	id	uuid	uuid	NO	gen_random_uuid()
+user_templates	user_id	uuid	uuid	NO	
+user_templates	project_id	uuid	uuid	YES	
+user_templates	template_id	uuid	uuid	YES	
+user_templates	title	character varying	varchar	NO	
+user_templates	content	text	text	NO	
+user_templates	source	character varying	varchar	YES	'import'::character varying
+user_templates	created_at	timestamp without time zone	timestamp	NO	now()
+user_templates	updated_at	timestamp without time zone	timestamp	NO	now()
+user_templates	category	character varying	varchar	YES	
+user_templates	description	text	text	YES	
+user_templates	is_from_purchase	boolean	bool	YES	false
+user_templates	deleted_at	timestamp without time zone	timestamp	YES	
+user_templates	can_republish	boolean	bool	YES	true
+user_templates	audit_status	character varying	varchar	YES	
+user_templates	ai_target_role	character varying	varchar	YES	
+user_token_accounts	id	uuid	uuid	NO	gen_random_uuid()
+user_token_accounts	user_id	uuid	uuid	NO	
+user_token_accounts	balance	bigint	int8	YES	0
+user_token_accounts	total_consumed	bigint	int8	YES	0
+user_token_accounts	total_recharged	bigint	int8	YES	0
+user_token_accounts	alert_threshold	bigint	int8	YES	
+user_token_accounts	alert_enabled	boolean	bool	YES	false
+user_token_accounts	daily_limit	bigint	int8	YES	10000
+user_token_accounts	daily_used	bigint	int8	YES	0
+user_token_accounts	daily_reset_at	timestamp without time zone	timestamp	YES	
+user_token_accounts	created_at	timestamp without time zone	timestamp	YES	now()
+user_token_accounts	updated_at	timestamp without time zone	timestamp	YES	now()
+user_token_accounts	preferred_model	character varying	varchar	YES	
+users	id	uuid	uuid	NO	gen_random_uuid()
+users	email	character varying	varchar	YES	
+users	phone	character varying	varchar	YES	
+users	password_hash	text	text	NO	
+users	nickname	character varying	varchar	YES	
+users	avatar_url	text	text	YES	
+users	created_at	timestamp without time zone	timestamp	NO	now()
+users	updated_at	timestamp without time zone	timestamp	NO	now()
+users	invite_code	character varying	varchar	YES	
+users	referred_by_code	character varying	varchar	YES	
+users	trial_days_earned	integer	int4	YES	0
+users	last_checkin_at	timestamp without time zone	timestamp	YES	
+users	checkin_streak	integer	int4	YES	0
+users	is_admin	boolean	bool	NO	false
+users	display_id	character varying	varchar	YES	
+users	admin_level	integer	int4	YES	
+users	banned_from_publish	boolean	bool	YES	false
+users	banned_from_payment	boolean	bool	YES	false
+users	last_active_at	timestamp without time zone	timestamp	YES	
+users	user_role	character varying	varchar	YES	'free'::character varying
+volumes	id	uuid	uuid	NO	gen_random_uuid()
+volumes	project_id	uuid	uuid	NO	
+volumes	title	character varying	varchar	NO	
+volumes	sort_order	integer	int4	NO	0
+volumes	synopsis	text	text	YES	
+volumes	created_at	timestamp without time zone	timestamp	NO	now()
+volumes	status	character varying	varchar	YES	'active'::character varying
+volumes	deleted_at	timestamp without time zone	timestamp	YES	
+withdrawal_requests	id	uuid	uuid	NO	gen_random_uuid()
+withdrawal_requests	user_id	uuid	uuid	NO	
+withdrawal_requests	amount	integer	int4	NO	
+withdrawal_requests	status	character varying	varchar	NO	'pending'::character varying
+withdrawal_requests	note	text	text	YES	
+withdrawal_requests	created_at	timestamp without time zone	timestamp	NO	now()

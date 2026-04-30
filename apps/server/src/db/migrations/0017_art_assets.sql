@@ -9,7 +9,7 @@ CREATE TABLE art_assets (
   -- 分类
   category VARCHAR(30) NOT NULL,     -- character / item / effect / ui / animation
   subcategory VARCHAR(30),           -- plant/animal/element, idle/upgrade/interact 等
-  asset_key VARCHAR(100) NOT NULL,   -- 唯一键: "character/fox/L3", "item/water_drop/icon"
+  asset_key VARCHAR(100) NOT NULL,   -- 唯一键: "character/orange-cat/L3", "item/water_drop/icon"
 
   -- 描述
   name VARCHAR(100) NOT NULL,        -- 显示名称
@@ -22,7 +22,7 @@ CREATE TABLE art_assets (
   file_size INTEGER,                 -- 字节
 
   -- 文件位置
-  storage_path TEXT NOT NULL,        -- 相对路径: "assets/sprites/characters/animal/fox/L3.png"
+  storage_path TEXT NOT NULL,        -- 相对路径: "assets/sprites/characters/animal/orange-cat/L3.png"
   cdn_url TEXT,                      -- CDN完整URL（可选）
 
   -- 状态

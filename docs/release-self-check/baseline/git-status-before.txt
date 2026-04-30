@@ -1,0 +1,244 @@
+ M apps/server/package.json
+ M apps/server/src/db/SPRITE-IMAGE-DESIGN.md
+ M apps/server/src/db/migrations/0017_art_assets.sql
+ M apps/server/src/db/migrations/0020_shop_items.sql
+ M apps/server/src/db/migrations/meta/_journal.json
+ M apps/server/src/db/schema.ts
+ M apps/server/src/db/seed-sprite-animal.sql
+ M apps/server/src/db/seed-sprite-test-data.sql
+ M apps/server/src/index.ts
+ M apps/server/src/router.ts
+ M apps/server/src/routes/ai-stream.ts
+ M apps/server/src/services/admin/router.ts
+ M apps/server/src/services/ai-gateway/router.ts
+ M apps/server/src/services/auth/router.ts
+ M apps/server/src/services/conversation/router.ts
+ M apps/server/src/services/creation-engine/role-dispatcher.ts
+ M apps/server/src/services/creation-engine/router.ts
+ M apps/server/src/services/creation-engine/task-brief.ts
+ M apps/server/src/services/project/router.ts
+ M apps/server/src/services/sprite-bean/router.ts
+ M apps/server/src/services/sprite-text/router.ts
+ M apps/server/src/services/sprite-text/service.ts
+ M apps/server/src/services/sprite/bean-service.ts
+ M apps/server/src/services/sprite/file-manager.ts
+ M apps/server/src/services/sprite/image-generator.ts
+ M apps/server/src/services/sprite/router.ts
+ M apps/server/src/services/sprite/sprite-ai.ts
+ M apps/server/src/services/subscription/gate.ts
+ M apps/server/src/services/subscription/router.ts
+ M apps/server/src/services/template/router.ts
+ M apps/server/src/services/user-account/router.ts
+ M apps/web/app/(auth)/login/page.tsx
+ M apps/web/app/(auth)/register/page.tsx
+ D apps/web/app/admin/art-assets/SpriteTextPanel.tsx
+ D apps/web/app/admin/art-assets/page.tsx
+ M apps/web/app/admin/billing/page.tsx
+ M apps/web/app/admin/layout.tsx
+ M apps/web/app/admin/logs/page.tsx
+ M apps/web/app/admin/permissions/page.tsx
+ M apps/web/app/admin/presets/page.tsx
+ D apps/web/app/admin/sprite-tools/page.tsx
+ M apps/web/app/admin/templates/page.tsx
+ M apps/web/app/admin/users/page.tsx
+ M apps/web/app/ai-config/docs/[provider]/page.tsx
+ M apps/web/app/ai-config/guide/page.tsx
+ M apps/web/app/ai-config/page.tsx
+ M apps/web/app/ai-config/usage/page.tsx
+ M apps/web/app/dashboard/earnings/page.tsx
+ M apps/web/app/dashboard/page.tsx
+ M apps/web/app/globals.css
+ M apps/web/app/layout.tsx
+ M apps/web/app/marketplace/[id]/page.tsx
+ M apps/web/app/marketplace/page.tsx
+ M apps/web/app/onboarding/page.tsx
+ M apps/web/app/page.tsx
+ M apps/web/app/project/[id]/agents/page.tsx
+ M apps/web/app/project/[id]/chapters/page.tsx
+ M apps/web/app/project/[id]/outline/page.tsx
+ M apps/web/app/project/[id]/page.tsx
+ M apps/web/app/project/[id]/settings/page.tsx
+ M apps/web/app/project/[id]/templates/page.tsx
+ D apps/web/app/project/new/page.tsx
+ D apps/web/app/settings/ai/page.tsx
+ M apps/web/app/settings/billing/page.tsx
+ D apps/web/app/settings/inventory/page.tsx
+ M apps/web/app/settings/page.tsx
+ M apps/web/app/settings/profile/page.tsx
+ D apps/web/app/settings/shop/page.tsx
+ M apps/web/app/settings/subscription/page.tsx
+ D apps/web/app/settings/usage/page.tsx
+ D apps/web/app/sprite-shop/inventory/page.tsx
+ D apps/web/app/sprite-shop/page.tsx
+ M apps/web/components/chapter/chapter-workspace.tsx
+ M apps/web/components/chapter/finalize-panel.tsx
+ M apps/web/components/chapter/self-check-panel.tsx
+ M apps/web/components/chapter/writing-style-panel.tsx
+ M apps/web/components/chat/action-card.tsx
+ M apps/web/components/chat/chat-input.tsx
+ M apps/web/components/chat/chat-panel.tsx
+ M apps/web/components/chat/guided-flow.tsx
+ M apps/web/components/chat/message-bubble.tsx
+ M apps/web/components/editor/story-editor.tsx
+ M apps/web/components/experience/experience-template-import.tsx
+ D apps/web/components/guide/guide-card.tsx
+ D apps/web/components/guide/guide-overlay.tsx
+ M apps/web/components/layout/navbar.tsx
+ M apps/web/components/layout/project-sidebar.tsx
+ M apps/web/components/modify/ai-modify-dialog.tsx
+ D apps/web/components/sprite/context-menu.tsx
+ D apps/web/components/sprite/convert-prompt.tsx
+ D apps/web/components/sprite/guide-dialog.tsx
+ D apps/web/components/sprite/hatch-animation.tsx
+ D apps/web/components/sprite/hatch-dialog.tsx
+ D apps/web/components/sprite/level-up-animation.tsx
+ D apps/web/components/sprite/secret-shop-easter-egg.tsx
+ D apps/web/components/sprite/shop-item.tsx
+ D apps/web/components/sprite/sprite-chat-dialog.tsx
+ D apps/web/components/sprite/sprite-component.tsx
+ M apps/web/components/template/publish-dialog.tsx
+ M apps/web/components/ui/slide-panel.tsx
+ M apps/web/components/workflow/workflow-panel.tsx
+ M apps/web/lib/ai-stream.ts
+ D apps/web/lib/guide-config.ts
+ D apps/web/lib/idle-animation-manager.ts
+ M apps/web/lib/outline-export.ts
+ D apps/web/lib/sprite-config.ts
+ D apps/web/lib/sprite-manifest.json
+ M apps/web/lib/trpc-provider.tsx
+ M apps/web/lib/use-chat.ts
+ D apps/web/lib/use-guide.ts
+ M apps/web/next.config.js
+ M apps/web/package.json
+ M apps/web/public/assets/sprites/README.md
+ D apps/web/public/assets/sprites/items/icons/bath.svg
+ D apps/web/public/assets/sprites/items/icons/crystal.svg
+ D apps/web/public/assets/sprites/items/icons/shears.svg
+ M apps/web/public/assets/sprites/items/icons/snack.svg
+ D apps/web/public/assets/sprites/items/icons/water_drop.svg
+ D apps/web/public/assets/sprites/plant/sunflower/animations/L/slow_breath/frame_000.png
+ D apps/web/styles/sprite-animations.css
+ M "docs/\346\241\214\351\235\242\347\262\276\347\201\265-\347\276\216\346\234\257\350\246\201\346\261\202\346\226\207\346\241\243.md"
+ M "docs/\346\241\214\351\235\242\347\262\276\347\201\265\347\273\204\344\273\266-\345\274\200\345\217\221\346\226\207\346\241\243.md"
+ M gen-sprites.js
+ M package.json
+ M packages/ai-adapters/src/adapters/anthropic-compat.ts
+ M packages/ai-adapters/src/adapters/factory.ts
+ M packages/ai-adapters/src/adapters/openai-compat.ts
+ M packages/ai-adapters/src/index.ts
+ M pnpm-lock.yaml
+?? apps/server/src/db/migrations/0005_lame_doctor_spectrum.sql
+?? apps/server/src/db/migrations/0009_ai_default_config.sql
+?? apps/server/src/db/migrations/0009_preferred_model.sql
+?? apps/server/src/db/migrations/0021_add_last_active_at.sql
+?? apps/server/src/db/migrations/0021_swap_items.sql
+?? apps/server/src/db/migrations/0022_fix_genre_tag_type.sql
+?? apps/server/src/db/migrations/0022_project_types_expansion.sql
+?? apps/server/src/db/migrations/0022_seed_sprite_texts.sql
+?? apps/server/src/db/migrations/0023_template_soft_delete.sql
+?? apps/server/src/db/migrations/0024_template_ai_roles.sql
+?? apps/server/src/db/migrations/0025_sprite_guide_reward.sql
+?? apps/server/src/db/migrations/0026_setting_relationships.sql
+?? apps/server/src/db/migrations/0027_story_narratives.sql
+?? apps/server/src/db/migrations/0028_settings_deliveries.sql
+?? apps/server/src/db/migrations/0029_edit_logs.sql
+?? apps/server/src/db/migrations/0030_feedbacks_notifications.sql
+?? apps/server/src/db/migrations/0031_password_reset_tokens.sql
+?? apps/server/src/db/migrations/0032_token_system.sql
+?? apps/server/src/db/migrations/0034_writing_style.sql
+?? apps/server/src/db/migrations/0036_chapter_analysis.sql
+?? apps/server/src/db/migrations/0037_user_role.sql
+?? apps/server/src/db/migrations/0038_genre_preset_project_type.sql
+?? apps/server/src/db/migrations/meta/0005_snapshot.json
+?? apps/server/src/db/seed-sprite-texts.sql
+?? apps/server/src/routes/ai-stream-platform.ts
+?? apps/server/src/routes/api-v1.ts
+?? apps/server/src/services/ai-job/
+?? apps/server/src/services/analysis/
+?? apps/server/src/services/feedback/
+?? apps/server/src/services/migration/
+?? apps/server/src/services/template/content-fingerprint.ts
+?? apps/server/src/services/token-relay/
+?? apps/server/src/services/withdrawal/
+?? apps/web/app/(auth)/forgot-password/
+?? apps/web/app/(auth)/reset-password/
+?? apps/web/app/admin/channels/
+?? apps/web/app/admin/feedback/
+?? apps/web/app/admin/migration/
+?? apps/web/app/admin/pricing/
+?? apps/web/app/admin/revenue/
+?? apps/web/app/ai-config/api-keys/
+?? apps/web/app/ai-config/consumption/
+?? apps/web/app/ai-config/layout.tsx
+?? apps/web/app/ai-config/recharge/
+?? apps/web/app/ai-config/tokens/
+?? apps/web/app/help/
+?? apps/web/app/project/[id]/chapters/chapter-tree.tsx
+?? apps/web/app/terms/
+?? apps/web/components/chapter/modify-panel.tsx
+?? apps/web/components/chat/supplement-dialog.tsx
+?? apps/web/components/feedback-dialog.tsx
+?? apps/web/components/import/
+?? apps/web/components/modify/ai-edit-dialog.tsx
+?? apps/web/components/notification-bell.tsx
+?? apps/web/components/settings/
+?? apps/web/lib/SPRITE-ANIMATION-LABELS.md
+?? apps/web/lib/auth-store.test.ts
+?? apps/web/lib/format-content.ts
+?? apps/web/lib/project-presets.ts
+?? apps/web/lib/project-role-presets.ts
+?? apps/web/lib/use-workflow-progress.ts
+?? apps/web/public/assets/sprites/items/icons/moon-dew.svg
+?? apps/web/public/assets/sprites/items/icons/nutrient.svg
+?? apps/web/public/assets/sprites/items/icons/pet.svg
+?? apps/web/public/assets/sprites/items/icons/sunlight-essence.svg
+?? apps/web/public/assets/sprites/items/icons/watering-can.svg
+?? apps/web/public/assets/sprites/plant/sunflower/animations/dance_L7/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/dance_L8/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/groom_L1/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/groom_L2/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/groom_L3/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/groom_L4/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/groom_L5/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/groom_L6/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/groom_L7/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/groom_L8/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/groom_L9/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/level_up_L0/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/level_up_L1/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/level_up_L2/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/level_up_L3/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/level_up_L4/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/level_up_L5/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/level_up_L6/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/level_up_L7/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/level_up_L8/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/level_up_L9/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/play_alone_L2/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/play_alone_L3/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/play_alone_L4/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/play_alone_L5/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/play_alone_L6/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/play_alone_L7/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/play_alone_L8/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/play_alone_L9/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/slow_breath_L0/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/sway_L1/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/sway_L2/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/sway_L3/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/sway_L4/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/sway_L5/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/sway_L6/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/sway_L7/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/sway_L8/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/sway_L9/
+?? apps/web/public/assets/sprites/plant/sunflower/animations/walk_L7/
+?? "apps/web/public/assets/sprites/plant/sunflower/png\345\212\250\347\224\273/"
+?? apps/web/public/recharge/
+?? apps/web/reorganize-animations.js
+?? apps/web/vitest.config.ts
+?? docs/release-self-check/
+?? "docs/\345\212\237\350\203\275\344\274\230\345\214\226\350\256\276\350\256\241\346\226\271\346\241\210.md"
+?? regen-manifest.js
+?? "\347\276\216\346\234\257\350\265\204\344\272\247/\345\276\256\344\277\241\346\224\266\346\254\276.jpg"
+?? "\347\276\216\346\234\257\350\265\204\344\272\247/\346\224\257\344\273\230\345\256\235\346\224\266\346\254\276.jpg"

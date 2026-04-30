@@ -1,19 +1,85 @@
 'use client';
 
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { trpc } from '@/lib/trpc';
-import { MessageBubble } from './message-bubble';
+import { MessageBubble, parseContent, type ParsedSegment } from './message-bubble';
 import { ChatInput } from './chat-input';
 import { useChat } from '@/lib/use-chat';
 import { GuidedFlow, type StepConfig, EDITOR_STEPS, SETTING_EDITOR_STEPS } from './guided-flow';
 import { SupplementDialog } from './supplement-dialog';
 
-// 欢迎消息映射
-const WELCOME_MESSAGES: Record<string, string> = {
-  editor: `你好，我是你的**文学编辑**，擅长故事构思和大纲设计。
+// 模块级常量：设定步骤 key 列表（避免每次渲染创建新数组引用）
+const SETTING_STEP_KEYS = SETTING_EDITOR_STEPS.map(s => s.key);
 
-我会引导你完成从灵感到完整大纲的创作过程：
+// 欢迎消息映射
+const SETTINGS_KEYWORDS = ['创建设定', '补充设定', '修改设定', '世界观', '角色设定', '力量体系', '阵营', '道具', '地理', '金融体系'];
+
+function hasQuestionEnding(text: string | undefined): boolean {
+  const trimmed = text?.trim();
+  return Boolean(trimmed && (trimmed.endsWith('？') || trimmed.endsWith('?')));
+}
+
+function extractAssistantActionTypes(content: string | undefined): string[] {
+  if (!content) return [];
+  return parseContent(content)
+    .filter((seg): seg is ParsedSegment & { type: 'action'; actionType: string } => seg.type === 'action' && typeof seg.actionType === 'string')
+    .map(seg => seg.actionType);
+}
+
+function inferSettingProgressStep(actionType: string, payload: Record<string, unknown>): string | null {
+  if (!(actionType === 'setting' || actionType === 'create_setting' || actionType === 'update_setting')) {
+    return null;
+  }
+
+  const rawCategory = typeof payload.category === 'string' ? payload.category : '';
+  const rawTitle = typeof payload.title === 'string' ? payload.title : '';
+  const text = `${rawCategory} ${rawTitle}`.toLowerCase();
+
+  if (text.includes('世界') || text.includes('规则') || text.includes('时代') || text.includes('底层')) return 'world_view';
+  if (text.includes('阵营') || text.includes('势力') || text.includes('组织')) return 'factions';
+  if (text.includes('主角') || text.includes('伙伴') || text.includes('角色')) return 'protagonists';
+  if (text.includes('反派') || text.includes('boss') || text.includes('敌对')) return 'antagonists';
+  if (text.includes('成长') || text.includes('能力') || text.includes('体系') || text.includes('修炼')) return 'growth_system';
+  if (text.includes('金融') || text.includes('货币') || text.includes('经济') || text.includes('交易')) return 'finance';
+  if (text.includes('道具') || text.includes('装备') || text.includes('物品')) return 'key_items';
+  if (text.includes('地理') || text.includes('地图') || text.includes('地点') || text.includes('环境')) return 'key_locations';
+  if (text.includes('自定义') || text.includes('补充') || text.includes('细节')) return 'custom';
+  if (text.includes('复盘') || text.includes('一致性')) return 'consistency';
+
+  return null;
+}
+
+function getSettingActionStepFromMessage(content: string | undefined): string | null {
+  if (!content) return null;
+  for (const seg of parseContent(content)) {
+    if (seg.type !== 'action' || !seg.actionType || !seg.payload) continue;
+    const inferred = inferSettingProgressStep(seg.actionType, seg.payload);
+    if (inferred) return inferred;
+  }
+  return null;
+}
+
+function getSettingCta(lastAssistant: { content: string } | undefined, completedSteps: Set<string>, isGuidedFlowComplete: boolean) {
+  const actionTypes = new Set(extractAssistantActionTypes(lastAssistant?.content));
+
+  // skip_to_review 已不再需要，自定义步骤的跳过由消息末尾按钮处理
+
+  if (actionTypes.has('deliver_settings') || (completedSteps.has('consistency') && !isGuidedFlowComplete)) {
+    return 'confirm_settings';
+  }
+
+  if (isGuidedFlowComplete) {
+    return 'go_to_outline';
+  }
+
+  return null;
+}
+
+const WELCOME_MESSAGES: Record<string, string> = {
+  editor: `您好，我是您的**文学编辑**，擅长故事构思和大纲设计。
+
+我会引导您完成从灵感到完整大纲的创作过程：
 
 1. **需求收集与故事骨架** — 了解核心创意，搭建世界观、主角成长线、核心冲突
 2. **故事脉络** — 生成全书故事脉络总纲
@@ -24,28 +90,28 @@ const WELCOME_MESSAGES: Record<string, string> = {
 7. **章节规划** — 为每个单元规划具体章节
 8. **开始撰写正文** — 全部章节完成后，进入正文创作
 
-我们一步一步来。首先，能否用一两句话描述一下你想写一个什么样的故事？`,
+我们一步一步来。首先，能否用一两句话描述一下您想写一个什么样的故事？`,
 
-  setting_editor: `你好，我是你的**设定编辑**，负责搭建世界观和设定体系。
+  setting_editor: `您好，我是您的**设定编辑**，负责搭建世界观和设定体系。
 
-我会引导你逐步完成 10 个设定步骤：
+我会引导您逐步完成 10 个设定步骤：
 
 1. **底层世界观** — 时代背景、社会结构、核心规则和铁则
 2. **阵营势力** — 各阵营的目标、关系和冲突
-3. **主角团** — 外貌、性格、背景、动机、能力
-4. **反派势力** — 反派组织、目标和对抗关系
+3. **主角团** — 您的主角叫什么？他/她有哪些重要的伙伴？
+4. **反派势力** — 有哪些重要的反派、终极BOSS？或是身份反转、亦师亦友的重要角色？
 5. **成长体系** — 角色成长路径和能力边界
 6. **金融体系** — 货币、物价、交易方式
-7. **重要道具** — 稀有物品和关键物资
+7. **重要道具** — 您希望道具是有体系等级类的，还是相对独立的？
 8. **重要地理** — 地图、重要地点和环境特征
-9. **自定义补充** — 你还有其他想法和细节
+9. **自定义补充** — 您还有其他想法和细节
 10. **一致性复盘** — 检查所有设定的逻辑自洽
 
-全部设定完成后，我会生成设定交付清单，并跳转到大纲页面，帮你检查并根据设定优化梗概。
+全部设定完成后，我会生成设定交付清单，并跳转到大纲页面，帮您检查并根据设定优化梗概。
 
-我们一步一步来。**先从底层世界观开始——你希望为这个世界设定什么样的核心规则和铁则？**`,
+我们一步一步来。**先从底层世界观开始——根据故事脉络的框架，您希望为这个世界设定什么样的核心规则和铁则？您可以向我描述，或者回复我自由发挥创建设定**`,
 
-  writer: `你好，我是你的**正文作者**，负责撰写章节正文。
+  writer: `您好，我是您的**正文作者**，负责撰写章节正文。
 
 **使用方法：**
 1. 在正文页面选择一个章节，点击「AI 创作」打开对话
@@ -53,14 +119,14 @@ const WELCOME_MESSAGES: Record<string, string> = {
 3. 提出修改意见 → 我反复调整
 4. 撰写完成后 → 点击「确认并保存到草稿」将内容保存到草稿编辑器`,
 
-  outline_writer: `你好！我是你的创作助手。让我们从大纲开始规划你的故事。
+  outline_writer: `您好！我是您的创作助手。让我们从大纲开始规划您的故事。
 
 请告诉我：
 - 故事的核心主题是什么？
-- 你希望写多长的故事？（短篇/中篇/长篇）
+- 您希望写多长的故事？（短篇/中篇/长篇）
 - 目标读者群体是？
 
-我会根据你的回答逐步搭建完整的故事框架。`,
+我会根据您的回答逐步搭建完整的故事框架。`,
 };
 
 interface ChatPanelProps {
@@ -70,6 +136,10 @@ interface ChatPanelProps {
   conversationType: 'outline' | 'settings' | 'chapter';
   roleKey: string;
   title?: string;
+  /** 最小化时显示的标题（如不传则使用 title） */
+  minimizedTitle?: string;
+  /** 显示模式：modal（居中弹窗，默认）| inline（页面平铺） */
+  mode?: 'modal' | 'inline';
   targetEntityId?: string;
   targetEntityType?: string;
   onActionConfirmed?: (type: string, entity: unknown) => void;
@@ -106,21 +176,11 @@ const AGENTS = [
 
 export function ChatPanel({
   open, onClose, projectId, conversationType, roleKey: initialRoleKey,
-  title, targetEntityId, targetEntityType, onActionConfirmed,
+  title, minimizedTitle, mode, targetEntityId, targetEntityType, onActionConfirmed,
   taskBrief, fullOutline, storyNarrative, customContextPrompt, experienceContext, onSaveDraft,
   onNavigateToSettings, onNavigateToOutline, onNavigateToChapter,
   importedSettingIds, projectSettings,
 }: ChatPanelProps) {
-  // Debug: verify projectSettings is received
-  useEffect(() => {
-    if (initialRoleKey === 'editor') {
-      console.log('[ChatPanel] editor projectSettings prop:', projectSettings ? `共${projectSettings.length}条` : 'undefined');
-      if (projectSettings) {
-        console.log('[ChatPanel] 类目:', [...new Set(projectSettings.map(s => s.category))]);
-      }
-    }
-  }, [open, initialRoleKey, projectSettings]);
-
   // 当前激活的 agent — 当 open 状态变化时，使用传入的 roleKey 初始化
   const [activeAgent, setActiveAgent] = useState(initialRoleKey);
 
@@ -158,16 +218,23 @@ export function ChatPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const creatingRef = useRef(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [showScrollToTop, setShowScrollToTop] = useState(false);
 
   const scrollToBottom = () => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   };
 
-  // 监听滚动，判断是否需要显示"回到底部"按钮
+  const scrollToTop = () => {
+    scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // 监听滚动，判断是否需要显示"回到顶部/底部"按钮
   const handleScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
-    setShowScrollToBottom(el.scrollTop < el.scrollHeight - el.clientHeight - 150);
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setShowScrollToBottom(distanceFromBottom > 200);
+    setShowScrollToTop(el.scrollTop > 200);
   };
 
   // Writer 工作流状态：pre_write → writing → post_write
@@ -201,9 +268,6 @@ export function ChatPanel({
   const [creationLevel, setCreationLevel] = useState<'volumes' | 'units' | 'chapters' | null>(null);
   const [creationQueue, setCreationQueue] = useState<Array<{ id: string; title: string }>>([]);
   const [creationIndex, setCreationIndex] = useState(0);
-
-  // 设定意图检测关键词
-  const SETTINGS_KEYWORDS = ['创建设定', '补充设定', '修改设定', '世界观', '角色设定', '力量体系', '阵营', '道具', '地理', '金融体系'];
 
   // 余额不足弹窗状态
   const [balanceError, setBalanceError] = useState<{ provider: string; rechargeUrl: string; mode: 'platform' | 'provider' } | null>(null);
@@ -275,65 +339,54 @@ export function ChatPanel({
     return importedSettingsData.filter(s => idSet.has(s.id));
   }, [importedSettingsData, importedSettingIds]);
 
-  // 设定编辑：设定步骤 key 与数据库 category 值的映射
-  const settingStepKeys = ['world_view', 'factions', 'protagonists', 'antagonists', 'growth_system', 'finance', 'key_items', 'key_locations', 'custom', 'consistency'];
-  const settingCategoryToKey: Record<string, string> = {
-    '世界观': 'world_view',
-    '底层世界观': 'world_view',
-    '阵营势力': 'factions',
-    '主角团': 'protagonists',
-    '反派势力': 'antagonists',
-    '成长体系': 'growth_system',
-    '成长/力量体系': 'growth_system',
-    '金融体系': 'finance',
-    '经济体系': 'finance',
-    '重要道具': 'key_items',
-    '重要地理': 'key_locations',
-    '自定义': 'custom',
-    '一致性复盘': 'consistency',
-  };
+  // 设定编辑：设定步骤 key 列表（使用模块级常量，避免每次渲染创建新数组）
+  const settingStepKeys = SETTING_STEP_KEYS;
 
   // 根据实际项目数据自动同步引导步骤
+  // 注意：不将 completedSteps 放入依赖数组，避免 setCompletedSteps → 触发自身 → 无限循环
   useEffect(() => {
     if (!open) return;
 
     // 设定编辑：根据已创建设定的实际数量标记步骤完成
-    // 不依赖类目名匹配（AI 输出的 category 值不可控），而是按顺序推进
     if (currentRoleKey === 'setting_editor' && allSettingsForStep) {
-      const completed = new Set<string>();
       const settingCount = allSettingsForStep.length;
-      // 每个设定标记对应步骤为完成，最多到 consistency
-      for (let i = 0; i < Math.min(settingCount, settingStepKeys.length); i++) {
-        completed.add(settingStepKeys[i]);
-      }
-      const prevSize = completedSteps.size;
-      setCompletedSteps(completed);
-      if (completed.size > prevSize) {
-        window.dispatchEvent(new CustomEvent('workflow-step-completed'));
-      }
+      const autoCompletedCount = Math.min(settingCount, Math.max(settingStepKeys.length - 2, 0));
+      setCompletedSteps(prev => {
+        const completed = new Set<string>();
+        for (let i = 0; i < autoCompletedCount; i++) {
+          completed.add(settingStepKeys[i]);
+        }
+        if (prev.has('custom')) completed.add('custom');
+        if (prev.has('consistency')) completed.add('consistency');
+        // 只在实际变化时更新，避免不必要的渲染
+        if (completed.size === prev.size && [...completed].every(k => prev.has(k))) return prev;
+        if (completed.size > prev.size) {
+          setTimeout(() => window.dispatchEvent(new CustomEvent('workflow-step-completed')), 0);
+        }
+        return completed;
+      });
     }
 
     // 文学编辑：根据已有卷/单元/章节/脉络标记已完成的步骤
     if (currentRoleKey === 'editor' && volumeList !== undefined) {
-      const completed = new Set<string>();
       const hasVolumes = volumeList.length > 0;
+      const hasNarrative = !!storyNarrative?.content;
       if (hasVolumes) {
-        completed.add('story_needs');
-        completed.add('story_skeleton');
-        completed.add('story_narrative');
-        completed.add('settings');
-        completed.add('settings_delivery');
-        completed.add('volume_plan');
-        // 检查是否有单元
+        // 检查是否有单元和章节
         (async () => {
+          const completed = new Set<string>();
+          completed.add('story_needs');
+          completed.add('story_skeleton');
+          completed.add('story_narrative');
+          completed.add('settings');
+          completed.add('settings_delivery');
+          completed.add('volume_plan');
           let hasUnits = false;
           for (const vol of volumeList) {
             const units = await utils.client.project.listUnits.query({ volumeId: vol.id });
             if (units && units.length > 0) { hasUnits = true; break; }
           }
           if (hasUnits) {
-            completed.add('unit_breakdown');
-            // 检查是否有章节
             let hasChapters = false;
             for (const vol of volumeList) {
               const units = await utils.client.project.listUnits.query({ volumeId: vol.id });
@@ -343,32 +396,42 @@ export function ChatPanel({
               }
               if (hasChapters) break;
             }
-            if (hasChapters) completed.add('chapter_plan');
+            if (hasChapters) {
+              completed.add('unit_breakdown');
+              completed.add('chapter_plan');
+            }
           }
-          const prevSize = completedSteps.size;
-          setCompletedSteps(new Set(completed));
-          if (completed.size > prevSize) {
-            window.dispatchEvent(new CustomEvent('workflow-step-completed'));
-          }
+          setCompletedSteps(prev => {
+            if (completed.size === prev.size && [...completed].every(k => prev.has(k))) return prev;
+            if (completed.size > prev.size) {
+              setTimeout(() => window.dispatchEvent(new CustomEvent('workflow-step-completed')), 0);
+            }
+            return completed;
+          });
         })();
         return;
       }
-      // 没有卷时，根据设定进度标记步骤
-      if (allSettingsForEditor && allSettingsForEditor.length >= settingStepKeys.length) {
-        // 设定已全部完成
+      // 没有卷时：根据故事脉络和设定进度标记步骤
+      const completed = new Set<string>();
+      if (hasNarrative) {
         completed.add('story_needs');
         completed.add('story_skeleton');
         completed.add('story_narrative');
+      }
+      if (allSettingsForEditor && allSettingsForEditor.length >= settingStepKeys.length) {
         completed.add('settings');
         completed.add('settings_delivery');
       }
-      const prevSize = completedSteps.size;
-      setCompletedSteps(completed);
-      if (completed.size > prevSize) {
-        window.dispatchEvent(new CustomEvent('workflow-step-completed'));
-      }
+      setCompletedSteps(prev => {
+        if (completed.size === prev.size && [...completed].every(k => prev.has(k))) return prev;
+        if (completed.size > prev.size) {
+          setTimeout(() => window.dispatchEvent(new CustomEvent('workflow-step-completed')), 0);
+        }
+        return completed;
+      });
     }
-  }, [open, currentRoleKey, allSettingsForEditor?.length, volumeList?.length]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, currentRoleKey, allSettingsForStep, allSettingsForEditor, volumeList, storyNarrative?.content, settingStepKeys]);
 
   // 获取当前章节上下文（用于 writer 角色）— 包含卷/单元层级
   const { data: chapterData } = trpc.project.getChapter.useQuery(
@@ -463,11 +526,11 @@ export function ChatPanel({
         });
       }
 
-      volSection += '\n\n---\n\n**接下来我将根据以上故事脉络，按 10 个步骤引导你搭建设定体系：世界观 → 阵营势力 → 主角团 → 反派势力 → 成长体系 → 金融体系 → 重要道具 → 重要地理 → 自定义补充 → 一致性复盘。**\n\n全部设定完成后，我会生成设定交付清单，并跳转到大纲页面，根据设定增量优化故事脉络。\n\n**我们先从底层世界观开始——根据故事脉络的框架，你希望为这个世界设定什么样的核心规则和铁则？**';
+      volSection += '\n\n---\n\n**接下来我将根据以上故事脉络，按 10 个步骤引导你搭建设定体系：世界观 → 阵营势力 → 主角团 → 反派势力 → 成长体系 → 金融体系 → 重要道具 → 重要地理 → 自定义补充 → 一致性复盘。**\n\n全部设定完成后，我会生成设定交付清单，并跳转到大纲页面，根据设定增量优化故事脉络。\n\n**我们先从底层世界观开始——根据故事脉络的框架，您希望为这个世界设定什么样的核心规则和铁则？您可以向我描述，或者回复我自由发挥创建设定**';
 
-      // 如果有已创建的设定，附加到欢迎词后面
+      // 如果有已创建的设定，附加到欢迎词后面（不再显示"上下文信息"标题）
       if (customContextPrompt) {
-        volSection += `\n\n---\n\n## 上下文信息\n${customContextPrompt}`;
+        volSection += `\n\n${customContextPrompt}`;
       }
       return volSection;
     }
@@ -477,13 +540,12 @@ export function ChatPanel({
       // 设定导入：从设定管理页面选中导入
       if (actualImportedSettings.length > 0) {
         let msg = `你好，我是你的**文学编辑**。\n\n`;
-        msg += `**已从设定管理页面导入以下设定条目：**\n\n`;
+        msg += `**已接收以下新设定内容：**\n\n`;
         actualImportedSettings.forEach(s => {
           const summary = s.content.length > 100 ? s.content.slice(0, 100) + '...' : (s.content || '（暂无内容）');
           msg += `- **[${s.category}] ${s.title}**：${summary}\n`;
         });
-        msg += `\n\n请阅读以上设定条目，AI 将根据设定检测对大纲的影响范围（卷→单元→章节），并提出修改建议。\n`;
-        msg += `\n**点击「根据导入设定修改梗概」开始分析。**`;
+        msg += `\n\n正在自动检测这些设定对大纲的影响范围（卷梗概→单元梗概→章节梗概），并撰写修改建议...\n`;
         return msg;
       }
 
@@ -570,7 +632,7 @@ export function ChatPanel({
       return `${base}\n\n---\n\n## 本章任务书\n${taskBrief}`;
     }
     return base;
-  }, [currentRoleKey, customContextPrompt, taskBrief, fullOutline, storyNarrative, allSettingsForEditor, volumeList, editorFlowPhase, actualImportedSettings]);
+  }, [currentRoleKey, customContextPrompt, taskBrief, fullOutline, storyNarrative, allSettingsForEditor, volumeList, editorFlowPhase, actualImportedSettings, settingStepKeys.length]);
 
   // 判断引导流是否已完成（所有步骤都已勾选）
   const isGuidedFlowComplete = useMemo(() => {
@@ -598,8 +660,15 @@ export function ChatPanel({
   useEffect(() => {
     if (!open || conversationId || creatingRef.current) return;
 
-    // 查找匹配当前 roleKey 的对话
-    const active = existingConvs?.find(c => c.status === 'active' && c.roleKey === currentRoleKey);
+    // 查找匹配当前 roleKey 的对话（R3a: 按章节孤立对话）
+    const active = existingConvs?.find(c => {
+      if (c.status !== 'active' || c.roleKey !== currentRoleKey) return false;
+      // 如果指定了 targetEntityId，优先精确匹配
+      if (targetEntityId && currentConvType === 'chapter') {
+        return c.targetEntityId === targetEntityId;
+      }
+      return true;
+    });
     if (active) {
       setConversationIds(prev => ({ ...prev, [currentRoleKey]: active.id }));
       // 如果当前对话的 targetEntity 不匹配，更新它
@@ -623,12 +692,22 @@ export function ChatPanel({
         modelId: config?.defaultModel || config?.provider || undefined,
       });
     }
-  }, [open, existingConvs, selectedConfigId, currentRoleKey, activeAgent, configs]);
+  }, [open, conversationId, existingConvs, selectedConfigId, currentRoleKey, currentConvType, configs, projectId, title, targetEntityId, targetEntityType, createConv, updateConvTarget]);
 
   // 引导流步骤推进逻辑 — 确认后自动发送"继续"消息给 AI
   const handleActionConfirmed = async (type: string, entity: unknown) => {
     // 原始回调透传
     await onActionConfirmed?.(type, entity);
+
+    // 处理 save_version：将版本内容导入草稿编辑器
+    if (type === 'version' && entity && typeof entity === 'object' && 'content' in (entity as Record<string, unknown>)) {
+      const e = entity as { content?: string };
+      if (e.content && onSaveDraft) {
+        onSaveDraft(e.content);
+        onClose();
+        return;
+      }
+    }
 
     // 确认完成后自动发送"继续"消息，让 AI 开始下一步
     const autoPrompts: Record<string, string> = {
@@ -645,9 +724,10 @@ export function ChatPanel({
       create_setting: '好的，继续下一个设定。',
     };
     const prompt = autoPrompts[type];
-    if (prompt && !streaming) {
+    const shouldAutoSend = Boolean(prompt && !streaming && currentRoleKey !== 'setting_editor');
+    if (shouldAutoSend) {
       // 等数据库写入完成后再发送
-      setTimeout(() => sendMessage(prompt), 300);
+      setTimeout(() => sendMessage(prompt!), 300);
     }
 
     // 引导流步骤联动
@@ -674,9 +754,12 @@ export function ChatPanel({
         advanceStep('volume_plan');
         setEditorFlowPhase('volumes');
       } else if (type === 'unit' || type === 'create_unit') {
-        advanceStep('unit_breakdown');
+        // 不立即标记 unit_breakdown 完成，等所有单元创建完再由章节创建推进
+        setEditorFlowPhase('units');
       } else if (type === 'chapter' || type === 'create_chapter') {
-        advanceStep('chapter_plan');
+        // 创建章节时才标记 unit_breakdown 完成（说明单元阶段已结束）
+        advanceStep('unit_breakdown');
+        setEditorFlowPhase('chapters');
       } else if (type === 'update_volume') {
         // 卷更新后：自动检查并提示该卷下的单元是否需要同步调整
         advanceStep('story_needs');
@@ -714,27 +797,41 @@ export function ChatPanel({
         advanceStep('chapter_plan');
       }
     } else if (currentRoleKey === 'setting_editor') {
-      if (type === 'setting' || type === 'create_setting') {
-        // 立即根据当前引导步骤标记完成，不等待数据库查询刷新
-        // 找到第一个未完成的步骤，将其标记为完成
+      if (type === 'setting' || type === 'create_setting' || type === 'update_setting') {
+        const actionPayload = entity && typeof entity === 'object' ? entity as Record<string, unknown> : {};
+        const currentStep = inferSettingProgressStep(type, actionPayload);
         const nextSteps = new Set(completedSteps);
-        for (const step of settingStepKeys) {
-          if (!nextSteps.has(step)) {
-            nextSteps.add(step);
-            break;
+
+        if (currentStep) {
+          nextSteps.add(currentStep);
+        } else {
+          for (const step of settingStepKeys) {
+            if (!nextSteps.has(step) && step !== 'custom' && step !== 'consistency') {
+              nextSteps.add(step);
+              break;
+            }
           }
         }
+
         setCompletedSteps(nextSteps);
-        // 同时触发数据库查询刷新，确保下次渲染时数据一致
         utils.project.listSettings.invalidate({ projectId });
+        window.dispatchEvent(new CustomEvent('workflow-step-completed'));
+
+        const nextIncompleteStep = settingStepKeys.find(step => !nextSteps.has(step));
+        if (nextIncompleteStep && type !== 'update_setting') {
+          const nextStepConfig = SETTING_EDITOR_STEPS.find(step => step.key === nextIncompleteStep);
+          if (nextStepConfig) {
+            setAutoContinuePrompt(`当前设定已保存。请继续进入「${nextStepConfig.label}」阶段，并根据故事脉络引导我完成这一部分。`);
+          }
+        }
       } else if (type === 'deliver_settings') {
-        advanceStep('settings');
-        advanceStep('settings_delivery');
+        advanceStep('consistency');
+        window.dispatchEvent(new CustomEvent('workflow-step-completed'));
       }
     }
   };
 
-  const advanceStep = (completedKey: string) => {
+  const advanceStep = useCallback((completedKey: string) => {
     setCompletedSteps(prev => {
       const next = new Set(prev);
       next.add(completedKey);
@@ -748,7 +845,27 @@ export function ChatPanel({
         setSupplementStep(completedStep);
       }
     }
-  };
+  }, [currentRoleKey]);
+
+  // 设定编辑：确认当前步骤文本内容，推进到下一步并自动发送下一步提示
+  const handleSettingStepConfirm = useCallback(() => {
+    const currentStepKey = settingStepKeys.find(k => !completedSteps.has(k));
+    if (!currentStepKey) return;
+
+    const nextSteps = new Set(completedSteps);
+    nextSteps.add(currentStepKey);
+    setCompletedSteps(nextSteps);
+    utils.project.listSettings.invalidate({ projectId });
+    window.dispatchEvent(new CustomEvent('workflow-step-completed'));
+
+    const nextIncompleteStep = settingStepKeys.find(k => !nextSteps.has(k));
+    if (nextIncompleteStep) {
+      const nextStepConfig = SETTING_EDITOR_STEPS.find(s => s.key === nextIncompleteStep);
+      if (nextStepConfig) {
+        setAutoContinuePrompt(`当前内容已确认。请继续进入「${nextStepConfig.label}」阶段，并根据故事脉络引导我完成这一部分。`);
+      }
+    }
+  }, [settingStepKeys, completedSteps, projectId, utils.project.listSettings]);
 
   // 检测并引导创建缺失的单元/章节
   const checkAndCreateMissingUnits = async () => {
@@ -768,7 +885,7 @@ export function ChatPanel({
     setEditorFlowPhase('chapters');
   };
 
-  const { messages, streaming, confirmedActions, sendMessage, confirmAction, stopStreaming, recoveryState, dismissRecovery, startReconnect, modelId: convModelId } = useChat({
+  const { messages, streaming, confirmedActions, sendMessage, confirmAction, stopStreaming, recoveryState, dismissRecovery, startReconnect, modelId: convModelId, retryState } = useChat({
     conversationId, configId: selectedConfigId, projectId, roleKey: currentRoleKey, onActionConfirmed: handleActionConfirmed,
     model: configs?.find(c => c.id === selectedConfigId)?.defaultModel || configs?.find(c => c.id === selectedConfigId)?.provider || undefined,
     volumes: currentRoleKey === 'editor' ? volumeList : undefined,
@@ -781,6 +898,17 @@ export function ChatPanel({
     projectSettings: currentRoleKey === 'editor' ? projectSettings : undefined,
   });
 
+  // 新消息到达时自动滚动到底部 + 刷新滚动按钮状态
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceFromBottom < 300) {
+      setTimeout(() => el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }), 50);
+    }
+    setTimeout(handleScroll, 100);
+  }, [messages.length, streaming]);
+
   // 检测余额不足错误，弹出充值提示
   useEffect(() => {
     const lastMsg = messages[messages.length - 1];
@@ -792,7 +920,7 @@ export function ChatPanel({
         if (errText.includes('Token余额不足') || errText.includes('平台') || errText.includes('token')) {
           setBalanceError({
             provider: '平台Token',
-            rechargeUrl: '/settings/tokens/recharge',
+            rechargeUrl: '/ai-config/recharge',
             mode: 'platform',
           });
         } else {
@@ -835,7 +963,7 @@ export function ChatPanel({
         }
       }
     }
-  }, [streaming, writerPhase, messages.length]);
+  }, [streaming, writerPhase, messages]);
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -848,6 +976,18 @@ export function ChatPanel({
     const lastMsg = messages[messages.length - 1];
     if (lastMsg?.role !== 'assistant') return;
     const content = lastMsg.content || '';
+
+    if (currentRoleKey === 'setting_editor') {
+      const inferredStep = getSettingActionStepFromMessage(content);
+      if (inferredStep && !completedSteps.has(inferredStep)) {
+        setCompletedSteps(prev => {
+          if (prev.has(inferredStep)) return prev;
+          const next = new Set(prev);
+          next.add(inferredStep);
+          return next;
+        });
+      }
+    }
 
     // 检测"所有卷已完成"关键词（文学编辑 — 卷阶段）
     if (currentRoleKey === 'editor' && editorFlowPhase === 'volumes') {
@@ -878,9 +1018,9 @@ export function ChatPanel({
         });
       }
     }
-  }, [messages, streaming, currentRoleKey, editorFlowPhase]);
+  }, [messages, streaming, currentRoleKey, editorFlowPhase, completedSteps]);
 
-  // 检测用户消息中的"设定"意图，弹出跳转按钮
+  // 检测用户消息中的"设定"意图，弹出跳转按钮（仅在创建全书简介后）
   useEffect(() => {
     if (streaming || messages.length === 0) return;
     const lastMsg = messages[messages.length - 1];
@@ -888,27 +1028,48 @@ export function ChatPanel({
 
     if (currentRoleKey === 'editor') {
       const content = lastMsg.content || '';
-      if (SETTINGS_KEYWORDS.some(kw => content.includes(kw))) {
+      // 只在全书简介创建后才提示跳转到设定管理
+      if (
+        completedSteps.has('story_narrative') &&
+        SETTINGS_KEYWORDS.some(kw => content.includes(kw))
+      ) {
         setPhaseChoice({
           type: 'settings_intent',
           message: '检测到你想要进行设定相关操作',
         });
       }
     }
-  }, [messages, streaming, currentRoleKey]);
+  }, [messages, streaming, currentRoleKey, completedSteps]);
 
-  // 检测设定导入：当有 importedSettingIds 时，弹出分析提示
+  // 检测设定导入：当有 importedSettingIds 时，自动执行影响范围分析
+  const [autoAnalysisSent, setAutoAnalysisSent] = useState(false);
+  const [autoContinuePrompt, setAutoContinuePrompt] = useState<string | null>(null);
   useEffect(() => {
     if (!open || currentRoleKey !== 'editor') return;
     if (!importedSettingIds || importedSettingIds.length === 0) return;
     if (actualImportedSettings.length === 0) return;
-    // 只在首次打开时检测
-    if (messages.length > 0) return;
+    // 只在首次打开时检测，且只自动发送一次
+    if (messages.length > 0 || autoAnalysisSent) return;
+    // 先显示分析提示卡片，告知用户已接收设定
     setPhaseChoice({
       type: 'import_settings_analysis',
-      message: `已导入 ${actualImportedSettings.length} 个设定条目，请分析影响范围。`,
+      message: `已接收 ${actualImportedSettings.length} 个新设定内容，正在检测对梗概的影响范围...`,
     });
-  }, [open, currentRoleKey, actualImportedSettings.length, messages.length]);
+    // 自动触发分析：跳过步骤 + 发送分析请求
+    setEditorFlowPhase('volumes');
+    advanceStep('story_needs');
+    advanceStep('story_skeleton');
+    advanceStep('story_narrative');
+    advanceStep('settings');
+    advanceStep('settings_delivery');
+    advanceStep('volume_plan');
+    setAutoAnalysisSent(true);
+    const settingList = actualImportedSettings.map(s => `[${s.category}] ${s.title}: ${s.content}`).join('\n\n');
+    setTimeout(() => {
+      setPhaseChoice(null);
+      sendMessage(`我已导入以下设定，请根据这些设定逐层检测对大纲的影响范围（卷梗概→单元梗概→章节梗概），并按层级提出修改建议，引导我一步步修改：\n\n${settingList}`);
+    }, 500);
+  }, [open, currentRoleKey, actualImportedSettings, importedSettingIds, messages.length, autoAnalysisSent, advanceStep, sendMessage]);
 
   // 检测设定完成：当文学编辑对话框打开，设定已全部完成但尚未开始卷创作
   useEffect(() => {
@@ -929,7 +1090,34 @@ export function ChatPanel({
         message: `检测到设定已全部完成！共创建了 ${settingCount} 个设定条目。`,
       });
     }
-  }, [open, currentRoleKey, allSettingsForEditor?.length, volumeList?.length, editorFlowPhase, messages.length]);
+  }, [open, currentRoleKey, allSettingsForEditor, volumeList, editorFlowPhase, messages.length, phaseChoice?.type, settingStepKeys.length]);
+
+  const latestAssistant = useMemo(
+    () => [...messages].reverse().find(m => m.role === 'assistant'),
+    [messages],
+  );
+
+  const latestAssistantActionTypes = useMemo(
+    () => new Set(extractAssistantActionTypes(latestAssistant?.content)),
+    [latestAssistant],
+  );
+
+  const settingEditorCta = useMemo(
+    () => currentRoleKey === 'setting_editor'
+      ? getSettingCta(latestAssistant as { content: string } | undefined, completedSteps, isGuidedFlowComplete)
+      : null,
+    [currentRoleKey, latestAssistant, completedSteps, isGuidedFlowComplete],
+  );
+
+  useEffect(() => {
+    if (!open || currentRoleKey !== 'setting_editor' || streaming) return;
+    if (!autoContinuePrompt) return;
+
+    const prompt = autoContinuePrompt;
+    setAutoContinuePrompt(null);
+    // 直接发送，不用 setTimeout — 避免 cleanup 取消 timer
+    sendMessage(prompt);
+  }, [open, currentRoleKey, streaming, autoContinuePrompt, sendMessage]);
 
   // Reset conversation when panel closes
   const handleClose = () => {
@@ -991,10 +1179,11 @@ export function ChatPanel({
   // 最小化后的缩略对话框
   if (minimized) {
     return (
-      <div className="fixed right-0 top-1/2 -translate-y-1/2 z-50">
+      <div className={`${mode === 'inline' ? '' : 'fixed right-0 top-1/2 -translate-y-1/2 '}z-50`}
+        style={mode === 'inline' ? { position: 'fixed', right: '0', top: '50%', transform: 'translateY(-50%)' } : {}}>
         <div className="bg-white rounded-l-2xl shadow-xl border border-r-0 border-gray-200 w-[200px]" style={{ height: `min(700px, calc(100vh - 80px))` }}>
           <div className="px-4 py-3 border-b border-gray-100">
-            <p className="text-sm font-semibold text-gray-900">{title || 'AI 对话'}</p>
+            <p className="text-sm font-semibold text-gray-900">{minimizedTitle || title || 'AI 对话'}</p>
             <p className="text-xs text-gray-400 mt-0.5">最小化中</p>
           </div>
           <div className="p-3">
@@ -1012,62 +1201,22 @@ export function ChatPanel({
 
   if (!open) return null;
 
+  const isInline = mode === 'inline';
+
   return (
     <>
-      {/* 背景遮罩 */}
-      <div className="fixed inset-0 z-50 bg-black/40" onClick={handleClose} />
-      {/* 居中弹窗 */}
-      <div className="fixed inset-0 z-50 flex items-center justify-center">
-        <div className="relative bg-white rounded-2xl shadow-2xl flex flex-col mx-4" style={{ width: `min(${dialogWidth}px, calc(100vw - 32px))`, height: `min(700px, calc(100vh - 80px))` }}>
+      {!isInline && (
+        <div className="fixed inset-0 z-50 bg-black/40" onClick={handleClose} />
+      )}
+      <div className={isInline ? '' : 'fixed inset-0 z-50 flex items-center justify-center'}>
+        <div className={`relative bg-white rounded-2xl shadow-2xl flex flex-col ${isInline ? 'w-full rounded-none' : 'mx-4'}`}
+          style={isInline ? { height: 'min(1200px, calc(100vh - 120px))' } : { width: `min(${dialogWidth}px, calc(100vw - 32px))`, height: `min(700px, calc(100vh - 80px))` }}>
           {/* 右侧拖拽调整手柄 */}
           <div
             onMouseDown={handleResizeStart}
             className="absolute inset-y-0 -right-3 w-6 cursor-col-resize z-10 flex items-center justify-center group"
           >
             <div className="w-1.5 h-12 rounded-full bg-gray-400/0 group-hover:bg-gray-400 transition-colors" />
-          </div>
-          {/* 标题栏 */}
-          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 shrink-0">
-            <h2 className="text-sm font-semibold text-gray-900">{title || 'AI 对话'}</h2>
-            <div className="flex items-center gap-1">
-              {/* 尺寸切换按钮组 */}
-              <div className="flex items-center border border-gray-200 rounded-md mr-2">
-                {[
-                  { size: 's', width: 600, label: '小' },
-                  { size: 'm', width: 1024, label: '中' },
-                  { size: 'l', width: 1400, label: '大' },
-                ].map(opt => (
-                  <button
-                    key={opt.size}
-                    onClick={() => setDialogWidth(opt.width)}
-                    className={`px-2 py-1 text-xs transition-colors ${
-                      dialogWidth === opt.width
-                        ? 'bg-gray-900 text-white'
-                        : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-                    } ${opt.size === 's' ? 'rounded-l-md' : opt.size === 'l' ? 'rounded-r-md' : ''}`}
-                    title={`${opt.label}尺寸 (${opt.width}px)`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-              {/* 最小化按钮 */}
-              <button
-                onClick={() => setMinimized(true)}
-                className="p-1 text-gray-400 hover:text-gray-600 transition rounded"
-                title="最小化"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M20 12H4" />
-                </svg>
-              </button>
-              {/* 关闭按钮 */}
-              <button onClick={handleClose} className="p-1 text-gray-400 hover:text-gray-600 transition rounded">
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
           </div>
           {noConfig ? (
             <div className="flex-1 flex items-center justify-center p-6">
@@ -1082,16 +1231,44 @@ export function ChatPanel({
             </div>
           ) : (
             <div className="flex flex-col flex-1 overflow-hidden relative">
+          {/* 固定顶部区域：标题栏 + Agent切换 + 工具栏 + 用量提示 + 创作引导 */}
+          <div className="shrink-0 bg-white z-10">
+            {/* 标题栏 */}
+            <div className="px-4 py-2 border-b border-gray-100">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-gray-900">{title || 'AI 对话'}</h2>
+                <div className="flex items-center gap-1">
+                  {/* 最小化按钮 — 黑底白字 */}
+                  <button
+                    onClick={() => setMinimized(true)}
+                    className="px-2 py-1 bg-gray-900 text-white rounded text-xs font-medium hover:bg-gray-800 transition"
+                    title="最小化"
+                  >
+                    最小化
+                  </button>
+                  {/* 关闭按钮 */}
+                  <button onClick={handleClose} className="p-1 text-gray-400 hover:text-gray-600 transition rounded">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <p className="text-xs text-gray-400 mt-0.5">您可以在对话中回复：确认、可以、修改、重新输出等要求，帮助AI进一步推进任务</p>
+            </div>
           {/* Agent 切换栏 */}
           <div className="flex border-b border-gray-100">
             {AGENTS.map(agent => (
               <button
                 key={agent.key}
                 onClick={() => setActiveAgent(agent.key)}
+                disabled={agent.key !== initialRoleKey}
                 className={`flex-1 py-2 text-xs font-medium transition ${
                   activeAgent === agent.key
                     ? 'border-b-2 border-gray-900 text-gray-900 bg-gray-50'
-                    : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
+                    : agent.key !== initialRoleKey
+                      ? 'text-gray-300 cursor-not-allowed'
+                      : 'text-gray-400 hover:text-gray-600 hover:bg-gray-50'
                 }`}
               >
                 {agent.label}
@@ -1135,7 +1312,7 @@ export function ChatPanel({
                 pct >= 90 ? 'bg-red-50 border-red-200' : pct >= 75 ? 'bg-amber-50 border-amber-200' : 'bg-gray-50 border-gray-200'
               }`}>
                 <span className={`font-medium ${pct >= 90 ? 'text-red-700' : pct >= 75 ? 'text-amber-700' : 'text-gray-600'}`}>
-                  今日Token用量：{tokenAccount.dailyUsed.toLocaleString()} / {tokenAccount.dailyLimit.toLocaleString()}（{pct}%）
+                  今日免费模型用量：{tokenAccount.dailyUsed.toLocaleString()} / {tokenAccount.dailyLimit.toLocaleString()}（{pct}%）
                 </span>
                 <div className="flex items-center gap-2">
                   <div className="w-20 h-1.5 bg-gray-200 rounded-full overflow-hidden">
@@ -1143,7 +1320,7 @@ export function ChatPanel({
                       style={{ width: `${Math.min(pct, 100)}%` }} />
                   </div>
                   {pct >= 90 && (
-                    <a href="/settings/tokens" className="text-red-600 hover:underline font-medium">充值 →</a>
+                    <a href="/ai-config/recharge" className="text-red-600 hover:underline font-medium">充值 →</a>
                   )}
                 </div>
               </div>
@@ -1152,7 +1329,7 @@ export function ChatPanel({
 
           {/* 创作引导步骤条 — 固定在顶部，不随消息滚动 */}
           {(currentRoleKey === 'editor' || currentRoleKey === 'setting_editor') && guidedFlowVisible && (
-            <div className="shrink-0 border-b border-gray-100 bg-gray-50/50">
+            <div className="border-b border-gray-100 bg-gray-50/50">
               {currentRoleKey === 'setting_editor' && isGuidedFlowComplete ? (
                 /* 设定编辑全部完成后显示操作按钮 */
                 <div className="px-3 py-3 flex items-center gap-3">
@@ -1160,23 +1337,21 @@ export function ChatPanel({
                   <span className="text-xs text-green-600 shrink-0">✓ 全部步骤已完成</span>
                   <div className="flex gap-2 ml-auto">
                     <button onClick={() => {
-                      // 保持对话开放，用户可以继续补充设定
                       setGuidedFlowInput('我想补充一些设定');
                     }} className="px-3 py-1.5 bg-gray-100 border border-gray-300 rounded-lg text-xs font-medium hover:bg-gray-200 transition text-gray-800">
                       继续自定义设定
                     </button>
                     <button onClick={() => onNavigateToOutline?.()}
-                      className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-xs font-medium hover:bg-gray-800 transition">
-                      前往大纲继续创作梗概 →
+                      className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 transition">
+                      前往大纲继续创作梗概
                     </button>
                   </div>
                   <button onClick={() => setGuidedFlowVisible(false)}
                     className="text-gray-400 hover:text-gray-600 transition" title="关闭创作引导">×</button>
                 </div>
               ) : currentRoleKey === 'editor' && (completedSteps.has('settings_delivery') || completedSteps.has('settings')) && !completedSteps.has('volume_plan') && !streaming ? (
-                /* 设定已交付/已接收，显示导入设定按钮 */
-                <div className="px-3 py-3 flex items-center gap-3">
-                  <span className="text-xs font-medium text-gray-500 shrink-0">创作引导</span>
+                /* 设定已交付/已接收，显示导入设定按钮（琥珀色大图标） */
+                <div className="px-3 py-4 flex flex-col items-center gap-3">
                   <div className="flex items-center gap-1 text-xs">
                     {EDITOR_STEPS.slice(0, completedSteps.has('settings_delivery') ? 5 : 4).map((step) => (
                       <span key={step.key} className="text-green-600">✓ {step.label}</span>
@@ -1190,11 +1365,14 @@ export function ChatPanel({
                     setTimeout(() => {
                       sendMessage('请读取项目中的全部设定词条，开始基于这些设定进行分卷规划。先创建第一卷。');
                     }, 300);
-                  }} className="ml-auto px-4 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-700 transition">
-                    导入设定并开始分卷规划 →
+                  }} className="flex items-center gap-3 px-6 py-3 bg-amber-500 text-white rounded-xl text-sm font-semibold hover:bg-amber-600 transition shadow-md">
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    导入设定并开始分卷规划
                   </button>
                   <button onClick={() => setGuidedFlowVisible(false)}
-                    className="text-gray-400 hover:text-gray-600 transition" title="关闭创作引导">×</button>
+                    className="text-xs text-gray-400 hover:text-gray-600 transition">关闭</button>
                 </div>
               ) : currentRoleKey === 'editor' && completedSteps.has('volume_plan') && editorFlowPhase === 'volumes' ? (
                 /* 卷规划已开始，显示导入设定快捷入口 */
@@ -1224,6 +1402,7 @@ export function ChatPanel({
               )}
             </div>
           )}
+          </div>
           {recoveryState && (
             <div className="mx-3 mt-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -1454,11 +1633,11 @@ export function ChatPanel({
               </div>
             )}
 
-            {/* 设定导入分析 — 从设定管理页面选中导入后弹出 */}
+            {/* 设定导入分析 — 自动检测影响范围 */}
             {phaseChoice?.type === 'import_settings_analysis' && (
               <div className="mx-3 mb-3 bg-blue-50 border border-blue-200 rounded-xl p-4">
-                <h4 className="font-medium text-sm text-blue-800 mb-2">设定导入分析</h4>
-                <p className="text-xs text-gray-600 mb-1">已导入以下设定条目：</p>
+                <h4 className="font-medium text-sm text-blue-800 mb-2">设定影响范围检测</h4>
+                <p className="text-xs text-gray-600 mb-1">已接收以下新设定内容：</p>
                 <div className="max-h-32 overflow-y-auto mb-3 space-y-1">
                   {actualImportedSettings.map(s => (
                     <span key={s.id} className="text-xs text-gray-700 bg-gray-100 px-2 py-1 rounded block">
@@ -1466,59 +1645,193 @@ export function ChatPanel({
                     </span>
                   ))}
                 </div>
-                <p className="text-xs text-gray-600 mb-3">AI 将逐一阅读每个设定，检测对大纲的影响范围（卷→单元→章节），并提出修改建议。</p>
-                <div className="flex gap-2">
-                  <button onClick={() => {
-                    setPhaseChoice(null);
-                    setEditorFlowPhase('volumes');
-                    advanceStep('story_needs');
-                    advanceStep('story_skeleton');
-                    advanceStep('story_narrative');
-                    advanceStep('settings');
-                    advanceStep('settings_delivery');
-                    advanceStep('volume_plan');
-                    // 发送设定导入分析请求
-                    const settingList = actualImportedSettings.map(s => `[${s.category}] ${s.title}: ${s.content}`).join('\n\n');
-                    setTimeout(() => {
-                      sendMessage(`我已导入以下设定，请根据这些设定分析对大纲的影响范围并提出修改建议：\n\n${settingList}`);
-                    }, 300);
-                  }} className="flex-1 py-2 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700">
-                    根据导入设定修改梗概 →
-                  </button>
-                  <button onClick={() => setPhaseChoice(null)}
-                    className="flex-1 py-2 border border-blue-300 rounded-lg text-xs font-medium hover:bg-blue-100">
-                    稍后处理
-                  </button>
+                <div className="flex items-center gap-2 text-xs text-blue-700">
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  正在自动检测对梗概的影响范围（卷→单元→章节），撰写修改建议中...
                 </div>
               </div>
             )}
 
             {messages.map((msg, i) => (
-              <MessageBubble key={i} role={msg.role as 'user' | 'assistant'}
-                content={msg.content} thinking={msg.thinking}
-                isStreaming={streaming && i === messages.length - 1}
-                onConfirmAction={confirmAction}
-                onActionSupplement={(actionType, payload) => {
-                  const prompt = (payload as { supplementPrompt?: string }).supplementPrompt || '';
-                  setGuidedFlowInput(prompt);
-                  setGuidedFlowVisible(false);
-                }}
-                confirmedActions={confirmedActions} />
+              <div key={i}>
+                <MessageBubble role={msg.role as 'user' | 'assistant'}
+                  content={msg.content} thinking={msg.thinking}
+                  isStreaming={streaming && i === messages.length - 1}
+                  onConfirmAction={confirmAction}
+                  onActionSupplement={(actionType, payload) => {
+                    const prompt = (payload as { supplementPrompt?: string }).supplementPrompt || '';
+                    setGuidedFlowInput(prompt);
+                    setGuidedFlowVisible(false);
+                  }}
+                  confirmedActions={confirmedActions} />
+                {/* 设定编辑：每条 AI 回复末尾增加"确认本条内容"按钮 */}
+                {currentRoleKey === 'setting_editor' && msg.role === 'assistant' && !(streaming && i === messages.length - 1) && !extractAssistantActionTypes(msg.content).some(t => t === 'setting' || t === 'create_setting' || t === 'update_setting' || t === 'deliver_settings') && settingStepKeys.some(k => !completedSteps.has(k)) && (() => {
+                  const currentStepKey = settingStepKeys.find(k => !completedSteps.has(k));
+                  const isCustomStep = currentStepKey === 'custom';
+                  return (
+                  <div className="flex justify-start pl-2 mt-1 mb-2 gap-2">
+                    <button
+                      onClick={async () => {
+                        if (streaming) return;
+                        if (isCustomStep) {
+                          // 跳过自定义：不保存内容，直接推进到下一步
+                          const nextSteps = new Set(completedSteps);
+                          nextSteps.add('custom');
+                          setCompletedSteps(nextSteps);
+                          window.dispatchEvent(new CustomEvent('workflow-step-completed'));
+                          const nextIncomplete = settingStepKeys.find(k => !nextSteps.has(k));
+                          if (nextIncomplete) {
+                            const nextConfig = SETTING_EDITOR_STEPS.find(s => s.key === nextIncomplete);
+                            if (nextConfig) {
+                              setAutoContinuePrompt(`跳过自定义设定。请继续进入「${nextConfig.label}」阶段。`);
+                            }
+                          }
+                          return;
+                        }
+                        // 1. 提取当前消息的纯文本内容
+                        const textContent = parseContent(msg.content)
+                          .filter(seg => seg.type === 'text')
+                          .map(seg => (seg.content || '').trim())
+                          .filter(Boolean)
+                          .join('\n');
+                        if (!textContent) return;
+
+                        // 2. 获取当前步骤信息作为设定分类
+                        if (!currentStepKey) return;
+                        const currentStepConfig = SETTING_EDITOR_STEPS.find(s => s.key === currentStepKey);
+                        const category = currentStepConfig?.label || '未分类';
+
+                        // 3. 调用 confirmAction 保存设定到数据库
+                        try {
+                          await confirmAction('create_setting', {
+                            category,
+                            title: category,
+                            content: textContent,
+                          });
+                        } catch (e) {
+                          console.error('保存设定失败:', e);
+                        }
+                      }}
+                      disabled={streaming}
+                      className="text-sm px-5 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition font-medium shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isCustomStep ? '跳过自定义' : '确认本条内容'}
+                    </button>
+                    <button
+                      onClick={() => setGuidedFlowInput(isCustomStep ? '补充设定：' : '请帮我修改：')}
+                      className="text-sm px-5 py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition font-medium"
+                    >
+                      {isCustomStep ? '补充设定' : '需要修改'}
+                    </button>
+                  </div>
+                  );
+                })()}
+                {/* 文学编辑：每条 AI 回复末尾增加"确认本条内容"按钮，推进引导流 */}
+                {currentRoleKey === 'editor' && !onSaveDraft && msg.role === 'assistant' && !(streaming && i === messages.length - 1) && !extractAssistantActionTypes(msg.content).some(t => ['narrative', 'create_narrative', 'update_narrative', 'volume', 'create_volume', 'update_volume', 'unit', 'create_unit', 'update_unit', 'chapter', 'create_chapter', 'update_chapter'].includes(t)) && !EDITOR_STEPS.every(s => completedSteps.has(s.key)) && (
+                  <div className="flex justify-start pl-2 mt-1 mb-2 gap-2">
+                    <button
+                      onClick={() => {
+                        if (streaming) return;
+                        sendMessage('好的，当前内容已确认，请继续。');
+                      }}
+                      disabled={streaming}
+                      className="text-sm px-5 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition font-medium shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      确认本条内容
+                    </button>
+                    <button
+                      onClick={() => setGuidedFlowInput('请帮我修改：')}
+                      className="text-sm px-5 py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition font-medium"
+                    >
+                      需要修改
+                    </button>
+                  </div>
+                )}
+                {/* writer 角色下，每条 AI 回复都增加确认导入草稿按钮 */}
+                {onSaveDraft && msg.role === 'assistant' && !(streaming && i === messages.length - 1) && (
+                  <div className="flex justify-start pl-2 mt-1 mb-2">
+                    <button onClick={() => {
+                      if (savingDraftRef.current) return;
+                      savingDraftRef.current = true;
+                      try {
+                        let content = msg.content.replace(/\[ACTION:\w+\][\s\S]*?\[\/ACTION\]/g, '').trim();
+                        const hasActionBlock = msg.content.includes('[ACTION:save_version]');
+                        if (!content && hasActionBlock) {
+                          const actionMatch = msg.content.match(/\[ACTION:save_version\]\s*(\{[\s\S]*?\})\s*\[\/ACTION\]/);
+                          if (actionMatch) {
+                            try { content = JSON.parse(actionMatch[1]).content || ''; } catch {}
+                          }
+                        }
+                        if (content) {
+                          onSaveDraft(content);
+                          onClose();
+                        } else {
+                          alert('当前 AI 回复中未检测到正文内容');
+                        }
+                      } finally {
+                        setTimeout(() => { savingDraftRef.current = false; }, 500);
+                      }
+                    }}
+                      className="text-sm px-5 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition font-medium shadow-sm">
+                      确认导入到草稿
+                    </button>
+                  </div>
+                )}
+              </div>
             ))}
           </div>
 
-          {/* 快速回到底部按钮 */}
+          {/* 回到最新对话按钮 — 固定在创作引导下方，滚动到上方时显示，到达底部时隐藏 */}
           {showScrollToBottom && (
-            <button
-              onClick={scrollToBottom}
-              className="absolute bottom-16 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-2 bg-white/95 border border-gray-300 rounded-full shadow-lg hover:bg-white hover:shadow-xl transition z-10 animate-pulse"
-            >
-              <svg className="w-4 h-4 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19 13l-7 7-7-7" />
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v14" />
-              </svg>
-              <span className="text-xs font-medium text-gray-600">最新对话</span>
-            </button>
+            <div className="shrink-0 px-3 py-1.5 border-b border-gray-100 bg-white/95 flex justify-center z-10">
+              <button
+                onClick={scrollToBottom}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-full shadow-sm hover:bg-gray-50 transition text-xs text-gray-500"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 13l-7 7-7-7" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v14" />
+                </svg>
+                回到最新对话
+              </button>
+            </div>
+          )}
+
+          {/* 浮动重试状态提示条 */}
+          {retryState?.reconnecting && streaming && (
+            <div className="absolute bottom-16 left-4 right-4 z-10">
+              <div className="px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-lg shadow-sm flex items-center gap-3">
+                <div className="flex gap-1.5 items-center">
+                  <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                  <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" style={{ animationDelay: '0.2s' }} />
+                  <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" style={{ animationDelay: '0.4s' }} />
+                </div>
+                <span className="text-sm text-amber-800">
+                  AI 正在生成回复，响应较慢
+                  {retryState.retryCount > 1 && `（正在尝试备用通道，第 ${retryState.retryCount} 次）`}
+                  {retryState.elapsedMs > 0 && `，已等待 ${Math.round(retryState.elapsedMs / 1000)} 秒`}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* 回到起始对话按钮 — 固定在输入栏上方，滚动到下方时显示，到达顶部时隐藏 */}
+          {showScrollToTop && (
+            <div className="shrink-0 px-3 py-1.5 border-t border-gray-100 bg-white/95 flex justify-center z-10">
+              <button
+                onClick={scrollToTop}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-full shadow-sm hover:bg-gray-50 transition text-xs text-gray-500"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 11l7-7 7 7" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 18V4" />
+                </svg>
+                回到起始对话
+              </button>
+            </div>
           )}
 
           {/* Writer 专属操作按钮 */}
@@ -1527,42 +1840,6 @@ export function ChatPanel({
               {/* 非 chapter 页面（无 onSaveDraft）：显示创作引导 + 跳转按钮 */}
               {!onSaveDraft ? (
                 <div className="space-y-2">
-                  {/* 章节创作进度概览 */}
-                  {fullOutline && fullOutline.length > 0 && (() => {
-                    let totalChapters = 0;
-                    let draftChapters = 0;
-                    let finalChapters = 0;
-                    for (const vol of fullOutline) {
-                      for (const unit of vol.units || []) {
-                        for (const ch of unit.chapters || []) {
-                          totalChapters++;
-                          const status = (ch as { status?: string | null }).status;
-                          if (status === 'draft') draftChapters++;
-                          if (status === 'final') finalChapters++;
-                        }
-                      }
-                    }
-                    const completedCount = draftChapters + finalChapters;
-                    return totalChapters > 0 ? (
-                      <div className="bg-gray-50 rounded-lg p-3">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-xs font-medium text-gray-600">章节创作进度</span>
-                          <span className="text-xs text-gray-400">{completedCount}/{totalChapters}</span>
-                        </div>
-                        <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                          <div className="h-full bg-gray-900 rounded-full transition-all"
-                            style={{ width: `${totalChapters > 0 ? (completedCount / totalChapters) * 100 : 0}%` }} />
-                        </div>
-                        {completedCount === 0 && (
-                          <p className="text-xs text-gray-400 mt-1.5">还没有开始创作正文，点击下方按钮选择章节开始</p>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="bg-gray-50 rounded-lg p-3">
-                        <p className="text-xs text-gray-400">还没有创建章节，请先在大纲中规划章节结构</p>
-                      </div>
-                    );
-                  })()}
                   <button onClick={() => onNavigateToChapter?.()}
                     className="w-full py-2.5 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition flex items-center justify-center gap-1.5">
                     前往正文创作
@@ -1732,39 +2009,55 @@ export function ChatPanel({
             </div>
           )}
 
-          {/* 快捷操作栏 — 当 AI 最后一条消息是引导性问题时显示 */}
+          {/* 快捷操作栏 — 当 AI 最后一条消息是引导性问题或阶段CTA可用时显示 */}
           {!streaming && conversationId && (() => {
-            const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
-            const isQuestion = lastAssistant?.content?.trim().endsWith('？') || lastAssistant?.content?.trim().endsWith('?');
-            if (!isQuestion) return null;
+            const lastAssistant = latestAssistant;
+            const isQuestion = hasQuestionEnding(lastAssistant?.content);
+            const shouldShowSettingCta = currentRoleKey === 'setting_editor' && Boolean(settingEditorCta);
+            const shouldShowSettingActionCard = currentRoleKey === 'setting_editor' && latestAssistantActionTypes.has('deliver_settings');
+            if ((!isQuestion && !shouldShowSettingCta) || shouldShowSettingActionCard) return null;
 
-            // 根据 roleKey 动态渲染快捷操作按钮
             const renderQuickActions = () => {
-              // 设定编辑 (setting_editor) 特殊按钮
               if (currentRoleKey === 'setting_editor') {
-                return (
-                  <div className="px-3 py-2 border-t border-gray-100 flex gap-2">
-                    <button
-                      onClick={() => {
-                        onNavigateToOutline?.();
-                      }}
-                      className="flex-1 py-2 bg-amber-500 text-white rounded-md text-sm font-medium hover:bg-amber-600 transition"
-                    >
-                      将设定导入大纲创作梗概
-                    </button>
-                    <button
-                      onClick={() => {
-                        sendMessage('继续自定义设定');
-                      }}
-                      className="flex-1 py-2 bg-gray-100 text-gray-600 rounded-md text-sm font-medium hover:bg-gray-200 transition"
-                    >
-                      继续自定义设定
-                    </button>
-                  </div>
-                );
+                if (settingEditorCta === 'confirm_settings') {
+                  return (
+                    <div className="px-3 py-2 border-t border-gray-100 flex gap-2">
+                      <button
+                        onClick={() => sendMessage('确认设定')}
+                        className="flex-1 py-2 bg-amber-500 text-white rounded-md text-sm font-medium hover:bg-amber-600 transition"
+                      >
+                        确认设定
+                      </button>
+                    </div>
+                  );
+                }
+
+                if (settingEditorCta === 'go_to_outline') {
+                  return (
+                    <div className="px-3 py-2 border-t border-gray-100 flex gap-2">
+                      <button
+                        onClick={() => {
+                          onNavigateToOutline?.();
+                        }}
+                        className="flex-1 py-2 bg-amber-500 text-white rounded-md text-sm font-medium hover:bg-amber-600 transition"
+                      >
+                        前往大纲继续创作梗概
+                      </button>
+                      <button
+                        onClick={() => {
+                          setGuidedFlowInput('继续自定义设定');
+                        }}
+                        className="flex-1 py-2 bg-gray-100 text-gray-600 rounded-md text-sm font-medium hover:bg-gray-200 transition"
+                      >
+                        继续自定义设定
+                      </button>
+                    </div>
+                  );
+                }
+
+                return null;
               }
 
-              // 正文作者 (writer) 特殊按钮
               if (currentRoleKey === 'writer') {
                 return (
                   <div className="px-3 py-2 border-t border-gray-100 flex gap-2">
@@ -1788,7 +2081,7 @@ export function ChatPanel({
                 );
               }
 
-              // 默认（文学编辑等）：确认并继续 / 需要修改
+              if (!completedSteps.has('story_narrative')) return null;
               return (
                 <div className="px-3 py-2 border-t border-gray-100 flex gap-2">
                   <button
@@ -1823,6 +2116,7 @@ export function ChatPanel({
             onNavigateToSettings={onNavigateToSettings}
             onNavigateToOutline={onNavigateToOutline}
             onNavigateToChapter={onNavigateToChapter}
+            model={convModelId}
           />
 
           <ChatInput
@@ -1835,10 +2129,12 @@ export function ChatPanel({
               }
             }}
             disabled={streaming || !conversationId}
+            userMessages={messages.filter(m => m.role === 'user').map(m => typeof m.content === 'string' ? m.content : '').filter(Boolean)}
             placeholder={(() => {
-              // 根据最后一条 AI 消息动态提示用户操作
-              const lastAssistant = [...messages].reverse().find(m => m.role === 'assistant');
-              if (lastAssistant?.content?.trim().endsWith('？') || lastAssistant?.content?.trim().endsWith('?')) {
+              if (currentRoleKey === 'setting_editor' && settingEditorCta) {
+                return '点击上方按钮继续当前设定阶段，或输入补充要求...';
+              }
+              if (hasQuestionEnding(latestAssistant?.content)) {
                 return '点击上方按钮确认或输入修改要求...';
               }
               return '输入消息，按 Enter 发送...';
@@ -1918,6 +2214,7 @@ function WorkflowStatusBar({
   onNavigateToSettings,
   onNavigateToOutline,
   onNavigateToChapter,
+  model,
 }: {
   streaming: boolean;
   currentRoleKey: string;
@@ -1928,32 +2225,47 @@ function WorkflowStatusBar({
   onNavigateToSettings?: () => void;
   onNavigateToOutline?: () => void;
   onNavigateToChapter?: () => void;
+  model?: string | null;
 }) {
-  // 流式输出中 — 显示当前状态
+  const isThinkingModel = model ? /thinking|Thinking|DeepSeek-R1|o1|o3|claude.*think/i.test(model) : false;
+
+  // 根据当前创作阶段生成进度提示
+  const getCurrentStepLabel = (): string => {
+    if (currentRoleKey === 'setting_editor') {
+      const steps = SETTING_EDITOR_STEPS;
+      const currentIdx = steps.findIndex(s => !completedSteps.has(s.key));
+      if (currentIdx === -1) return '一致性复盘';
+      return steps[currentIdx].label;
+    }
+    if (currentRoleKey === 'editor') {
+      switch (editorFlowPhase) {
+        case 'skeleton': return '需求收集';
+        case 'story_narrative': return '故事脉络';
+        case 'narrative_updated': return '故事脉络更新';
+        case 'volumes': return '分卷规划';
+        case 'ask_settings': return '设定补充';
+        case 'units': return '单元拆解';
+        case 'chapters': return '章节规划';
+        case 'done': return '全部完成';
+        default: return '需求收集';
+      }
+    }
+    return '';
+  };
+
+  // 流式输出中 — 显示当前阶段 + 状态
   if (streaming) {
+    const currentStep = getCurrentStepLabel();
     return (
       <div className="px-3 py-1.5 border-t border-gray-100 bg-gray-50/50">
         <div className="flex items-center gap-2">
           <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse" />
-          <span className="text-xs text-gray-500">AI 正在生成回复...</span>
-        </div>
-      </div>
-    );
-  }
-
-  // 引导流显示但未完成 — 显示当前阶段提示
-  if (guidedFlowVisible && !isGuidedFlowComplete) {
-    const stepCount = completedSteps.size;
-    const roleLabel = currentRoleKey === 'editor' ? '文学编辑' : '设定编辑';
-    const totalSteps = currentRoleKey === 'editor' ? 7 : 10;
-    return (
-      <div className="px-3 py-1.5 border-t border-gray-100 bg-amber-50/50">
-        <div className="flex items-center gap-2 text-xs">
-          <span className="text-amber-600">{roleLabel}引导中</span>
-          <span className="text-gray-300">·</span>
-          <span className="text-gray-500">步骤 {stepCount}/{totalSteps}</span>
-          <span className="text-gray-300">·</span>
-          <span className="text-gray-400">跟随 AI 引导逐步完成</span>
+          <span className="text-xs text-gray-500">
+            {currentStep ? `正在生成「${currentStep}」，` : ''}
+            {isThinkingModel
+              ? 'thinking模型时间较久，请耐心等待。。。'
+              : 'AI正在生成回复，请耐心等待。。。'}
+          </span>
         </div>
       </div>
     );
@@ -1962,12 +2274,12 @@ function WorkflowStatusBar({
   // 引导流完成 — 显示导航提示
   if (isGuidedFlowComplete && currentRoleKey === 'setting_editor' && onNavigateToOutline) {
     return (
-      <div className="px-3 py-1.5 border-t border-gray-100 bg-green-50/50">
-        <div className="flex items-center gap-2 text-xs">
-          <span className="text-green-600">✓ 设定已全部完成</span>
-          <span className="text-gray-300">·</span>
-          <button onClick={onNavigateToOutline} className="text-gray-900 font-medium hover:underline">
-            前往大纲继续创作梗概 →
+      <div className="px-3 py-2 border-t border-gray-100 bg-green-50/50">
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-green-600 shrink-0">✓ 设定已全部完成</span>
+          <button onClick={onNavigateToOutline}
+            className="ml-auto px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 transition">
+            前往大纲页面
           </button>
         </div>
       </div>
@@ -1983,6 +2295,24 @@ function WorkflowStatusBar({
           <button onClick={onNavigateToChapter} className="text-gray-900 font-medium hover:underline">
             前往正文创作 →
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  // 进行中 — 显示当前阶段进度
+  if (!streaming && completedSteps.size > 0) {
+    const stepLabel = getCurrentStepLabel();
+    const totalSteps = currentRoleKey === 'setting_editor'
+      ? SETTING_EDITOR_STEPS.length
+      : EDITOR_STEPS.length;
+    const doneCount = completedSteps.size;
+    return (
+      <div className="px-3 py-1.5 border-t border-gray-100 bg-blue-50/50">
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-blue-600">当前阶段：{stepLabel}</span>
+          <span className="text-gray-300">·</span>
+          <span className="text-gray-500">已完成 {doneCount}/{totalSteps} 步</span>
         </div>
       </div>
     );

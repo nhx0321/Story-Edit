@@ -1,0 +1,9 @@
+total 308
+drwxr-xr-x 1 Administrator 197121      0  4月 25 17:24 .
+drwxr-xr-x 1 Administrator 197121      0  4月 30 12:11 ..
+-rw-r--r-- 1 Administrator 197121    985  4月 25 17:24 _journal.json
+-rw-r--r-- 1 Administrator 197121  35068  4月 10 17:15 0000_snapshot.json
+-rw-r--r-- 1 Administrator 197121  35084  4月 10 19:15 0001_snapshot.json
+-rw-r--r-- 1 Administrator 197121  41437  4月 10 23:47 0002_snapshot.json
+-rw-r--r-- 1 Administrator 197121  61423  4月 12 08:17 0004_snapshot.json
+-rw-r--r-- 1 Administrator 197121 112979  4月 19 16:38 0005_snapshot.json

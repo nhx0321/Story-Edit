@@ -1,14 +1,15 @@
 // 用户账户 tRPC 路由（签到、邀请码、账单）
 import { z } from 'zod';
-import { eq, and, desc, sql } from 'drizzle-orm';
+import { eq, desc } from 'drizzle-orm';
 import { TRPCError } from '@trpc/server';
 import { router, protectedProcedure } from '../../trpc';
 import { db } from '../../db';
 import {
-  users, subscriptions, checkinRecords, referralRecords, transactions, userSprites,
+  users, checkinRecords, referralRecords, transactions,
 } from '../../db/schema';
 import { randomBytes } from 'crypto';
 import { hashPassword, verifyPassword } from '../auth/utils';
+import { ensureUserSprite, recordBeanTransaction } from '../sprite/bean-service';
 
 // 生成6位邀请码
 function generateInviteCode(): string {
@@ -21,27 +22,6 @@ export const userAccountRouter = router({
     const [user] = await db.select().from(users).where(eq(users.id, ctx.userId));
     if (!user) throw new TRPCError({ code: 'NOT_FOUND', message: '用户不存在' });
 
-    const [sub] = await db.select()
-      .from(subscriptions)
-      .where(eq(subscriptions.userId, ctx.userId));
-
-    // 计算 VIP 等级
-    let vipLevel = '免费版';
-    let vipExpiresAt = null;
-    if (sub?.status === 'premium' && sub.currentPeriodEnd) {
-      const daysLeft = Math.ceil((sub.currentPeriodEnd.getTime() - Date.now()) / 86400000);
-      if (daysLeft > 0) {
-        vipLevel = daysLeft > 365 ? '年费VIP' : daysLeft > 30 ? 'VIP' : '体验VIP';
-        vipExpiresAt = sub.currentPeriodEnd;
-      }
-    } else if (sub?.status === 'trial' && sub.trialEndsAt) {
-      const daysLeft = Math.ceil((sub.trialEndsAt.getTime() - Date.now()) / 86400000);
-      if (daysLeft > 0) {
-        vipLevel = daysLeft > 365 ? '年费VIP' : daysLeft > 30 ? 'VIP' : '体验VIP';
-        vipExpiresAt = sub.trialEndsAt;
-      }
-    }
-
     return {
       id: user.id,
       email: user.email,
@@ -50,10 +30,7 @@ export const userAccountRouter = router({
       avatarUrl: user.avatarUrl,
       displayId: user.displayId,
       inviteCode: user.inviteCode,
-      trialDaysEarned: user.trialDaysEarned,
       checkinStreak: user.checkinStreak,
-      vipLevel,
-      vipExpiresAt,
     };
   }),
 
@@ -106,24 +83,33 @@ export const userAccountRouter = router({
           .set({ referredByCode: input.code.toUpperCase() })
           .where(eq(users.id, ctx.userId));
 
-        // 双方各 +300 精灵豆奖励
-        const INVITE_REWARD_BEANS = 300;
+        // 双方各 +30 精灵豆奖励（仅用于模板市场）
+        const INVITE_REWARD_BEANS = 30;
+
+        await Promise.all([
+          ensureUserSprite(referrer.id),
+          ensureUserSprite(ctx.userId),
+        ]);
 
         // 给推荐人加精灵豆
-        const [referrerSprite] = await db.select({ beanBalance: userSprites.beanBalance })
-          .from(userSprites).where(eq(userSprites.userId, referrer.id));
-        if (referrerSprite) {
-          const newReferrerBalance = (referrerSprite.beanBalance ?? 0) + INVITE_REWARD_BEANS;
-          await db.update(userSprites).set({ beanBalance: newReferrerBalance }).where(eq(userSprites.userId, referrer.id));
-        }
+        await recordBeanTransaction({
+          userId: referrer.id,
+          type: 'earn',
+          amount: INVITE_REWARD_BEANS,
+          description: '邀请好友奖励',
+          relatedType: 'invite',
+          relatedId: ctx.userId,
+        });
 
         // 给被邀请人加精灵豆
-        const [currentUserSprite] = await db.select({ beanBalance: userSprites.beanBalance })
-          .from(userSprites).where(eq(userSprites.userId, ctx.userId));
-        if (currentUserSprite) {
-          const newUserBalance = (currentUserSprite.beanBalance ?? 0) + INVITE_REWARD_BEANS;
-          await db.update(userSprites).set({ beanBalance: newUserBalance }).where(eq(userSprites.userId, ctx.userId));
-        }
+        await recordBeanTransaction({
+          userId: ctx.userId,
+          type: 'earn',
+          amount: INVITE_REWARD_BEANS,
+          description: '填写邀请码奖励',
+          relatedType: 'invite',
+          relatedId: referrer.id,
+        });
 
         // 记录邀请
         await db.insert(referralRecords).values({
@@ -182,19 +168,34 @@ export const userAccountRouter = router({
       })
       .where(eq(users.id, ctx.userId));
 
-    // 每签到 10 天获得 1 天体验时长
-    let rewarded = false;
+    // 每日签到奖励：10 精灵豆（仅用于模板市场）
+    const DAILY_BEANS = 10;
+    await ensureUserSprite(ctx.userId);
+    await recordBeanTransaction({
+      userId: ctx.userId,
+      type: 'earn',
+      amount: DAILY_BEANS,
+      description: '每日签到奖励',
+      relatedType: 'checkin',
+    });
+
+    // 每签到 10 天额外奖励 20 精灵豆
+    let bonusBeans = 0;
     if (newStreak % 10 === 0) {
-      await db.update(users)
-        .set({ trialDaysEarned: sql`${users.trialDaysEarned} + 1` })
-        .where(eq(users.id, ctx.userId));
-      rewarded = true;
+      bonusBeans = 20;
+      await recordBeanTransaction({
+        userId: ctx.userId,
+        type: 'earn',
+        amount: bonusBeans,
+        description: '连续签到额外奖励',
+        relatedType: 'checkin',
+      });
     }
 
     return {
       streak: newStreak,
       daysToNextReward: newStreak % 10,
-      rewarded,
+      dailyBeans: DAILY_BEANS + bonusBeans,
     };
   }),
 
@@ -274,7 +275,7 @@ export const userAccountRouter = router({
             '基础 AI 对话',
             '3 个项目',
             '基础模板',
-            '每月 10 万 token 免费额度',
+            '免费模型每日 10 万 token 免费额度',
           ],
           limitations: [
             '无法使用高级模板',

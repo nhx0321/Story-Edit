@@ -11,10 +11,12 @@ import { conversationRouter } from './services/conversation/router';
 import { templateRouter } from './services/template/router';
 import { userAccountRouter } from './services/user-account/router';
 import { workflowRouter } from './services/workflow/router';
-import { spriteRouter } from './services/sprite/router';
-import { spriteTextRouter } from './services/sprite-text/router';
 import { spriteBeanRouter } from './services/sprite-bean/router';
 import { adminRouter } from './services/admin/router';
+import { feedbackRouter } from './services/feedback/router';
+import { tokenRelayRouter } from './services/token-relay/router';
+import { migrationRouter } from './services/migration/router';
+import { analysisRouter } from './services/analysis/router';
 
 export const appRouter = router({
   health: publicProcedure.query(() => ({
@@ -34,10 +36,12 @@ export const appRouter = router({
   template: templateRouter,
   userAccount: userAccountRouter,
   workflow: workflowRouter,
-  sprite: spriteRouter,
   spriteBean: spriteBeanRouter,
-  spriteText: spriteTextRouter,
   admin: adminRouter,
+  feedback: feedbackRouter,
+  token: tokenRelayRouter,
+  migration: migrationRouter,
+  analysis: analysisRouter,
 });
 
 export type AppRouter = typeof appRouter;

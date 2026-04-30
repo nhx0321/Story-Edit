@@ -40,7 +40,7 @@ export function OutlineSidebar({ projectId, currentChapterId, embedded }: Outlin
       setExpandedVolumes(nextVolumes);
       setExpandedUnits(nextUnits);
     }
-  }, [outlineTree, currentChapterId]);
+  }, [outlineTree, currentChapterId, expandedVolumes, expandedUnits]);
 
   if (!outlineTree || outlineTree.length === 0) {
     return (

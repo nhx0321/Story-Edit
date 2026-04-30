@@ -4,8 +4,8 @@ import { eq, and, asc, desc, ne, isNull, or, sql, not, gte, lt, inArray } from '
 import { TRPCError } from '@trpc/server';
 import { router, protectedProcedure, verifyProjectOwner } from '../../trpc';
 import { db } from '../../db';
-import { projects, volumes, units, chapters, chapterVersions, outlineVersions, settings, settingRelationships, aiRoles, genrePresets, storyNarratives } from '../../db/schema';
-import { checkSubscription, getFeatureLimits } from '../../services/subscription/gate';
+import { projects, volumes, units, chapters, chapterVersions, outlineVersions, settings, settingRelationships, aiRoles, genrePresets, storyNarratives, settingsDeliveries, conversations, editLogs } from '../../db/schema';
+import { checkContentFingerprint } from '../template/content-fingerprint';
 
 export const projectRouter = router({
   // 创建项目
@@ -183,6 +183,7 @@ export const projectRouter = router({
             id: chapters.id,
             title: chapters.title,
             synopsis: chapters.synopsis,
+            status: chapters.status,
           }).from(chapters)
             .where(and(eq(chapters.unitId, unit.id), or(isNull(chapters.status), ne(chapters.status, 'deleted'))))
             .orderBy(asc(chapters.sortOrder));
@@ -202,17 +203,6 @@ export const projectRouter = router({
 
       // 如果更新梗概，保存版本
       if (synopsis !== undefined) {
-        const subCtx = await checkSubscription(ctx.userId);
-        const features = getFeatureLimits(subCtx.tier);
-        const existingCount = await db.select({ count: sql<number>`count(*)::int` })
-          .from(outlineVersions)
-          .where(and(eq(outlineVersions.entityType, 'volume'), eq(outlineVersions.entityId, id), isNull(outlineVersions.deletedAt)));
-        if ((existingCount[0]?.count ?? 0) >= features.maxVersionsPerType) {
-          throw new TRPCError({
-            code: 'BAD_REQUEST',
-            message: `卷梗概版本已达上限（${features.maxVersionsPerType} 个），请删除旧版本后再保存`,
-          });
-        }
         const [latest] = await db.select({ versionNumber: outlineVersions.versionNumber })
           .from(outlineVersions)
           .where(and(eq(outlineVersions.entityType, 'volume'), eq(outlineVersions.entityId, id)))
@@ -239,17 +229,6 @@ export const projectRouter = router({
       const { id, volumeId, synopsis, ...rest } = input;
 
       if (synopsis !== undefined) {
-        const subCtx = await checkSubscription(ctx.userId);
-        const features = getFeatureLimits(subCtx.tier);
-        const existingCount = await db.select({ count: sql<number>`count(*)::int` })
-          .from(outlineVersions)
-          .where(and(eq(outlineVersions.entityType, 'unit'), eq(outlineVersions.entityId, id), isNull(outlineVersions.deletedAt)));
-        if ((existingCount[0]?.count ?? 0) >= features.maxVersionsPerType) {
-          throw new TRPCError({
-            code: 'BAD_REQUEST',
-            message: `单元梗概版本已达上限（${features.maxVersionsPerType} 个），请删除旧版本后再保存`,
-          });
-        }
         const [latest] = await db.select({ versionNumber: outlineVersions.versionNumber })
           .from(outlineVersions)
           .where(and(eq(outlineVersions.entityType, 'unit'), eq(outlineVersions.entityId, id)))
@@ -275,18 +254,6 @@ export const projectRouter = router({
       const [vol] = await db.select({ projectId: volumes.projectId }).from(volumes).where(eq(volumes.id, unit.volumeId));
       if (!vol) throw new TRPCError({ code: 'NOT_FOUND', message: '卷不存在' });
       await verifyProjectOwner(vol.projectId, ctx.userId);
-
-      const subCtx = await checkSubscription(ctx.userId);
-      const features = getFeatureLimits(subCtx.tier);
-      const existingCount = await db.select({ count: sql<number>`count(*)::int` })
-        .from(outlineVersions)
-        .where(and(eq(outlineVersions.entityType, 'chapter'), eq(outlineVersions.entityId, input.id), isNull(outlineVersions.deletedAt)));
-      if ((existingCount[0]?.count ?? 0) >= features.maxVersionsPerType) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: `章节梗概版本已达上限（${features.maxVersionsPerType} 个），请删除旧版本后再保存`,
-        });
-      }
 
       const [latest] = await db.select({ versionNumber: outlineVersions.versionNumber })
         .from(outlineVersions)
@@ -432,6 +399,31 @@ export const projectRouter = router({
         .orderBy(asc(chapters.sortOrder));
     }),
 
+  // 获取项目中最近编辑的章节
+  getRecentChapter: protectedProcedure
+    .input(z.object({ projectId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      await verifyProjectOwner(input.projectId, ctx.userId);
+      const vols = await db.select({ id: volumes.id }).from(volumes)
+        .where(and(eq(volumes.projectId, input.projectId), isNull(volumes.deletedAt)));
+      if (vols.length === 0) return null;
+      const volIds = vols.map(v => v.id);
+      const unitRows = await db.select({ id: units.id }).from(units)
+        .where(and(inArray(units.volumeId, volIds), isNull(units.deletedAt)));
+      if (unitRows.length === 0) return null;
+      const unitIds = unitRows.map(u => u.id);
+      const [recent] = await db.select({
+        id: chapters.id,
+        unitId: chapters.unitId,
+        title: chapters.title,
+        updatedAt: chapters.updatedAt,
+      }).from(chapters)
+        .where(and(inArray(chapters.unitId, unitIds), or(isNull(chapters.status), ne(chapters.status, 'deleted'))))
+        .orderBy(desc(chapters.updatedAt))
+        .limit(1);
+      return recent || null;
+    }),
+
   deleteChapter: protectedProcedure
     .input(z.object({ id: z.string().uuid(), unitId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
@@ -568,24 +560,7 @@ export const projectRouter = router({
       if (!vol) throw new TRPCError({ code: 'NOT_FOUND' });
       await verifyProjectOwner(vol.projectId, ctx.userId);
 
-      // 版本数量限制检查
-      const subCtx = await checkSubscription(ctx.userId);
-      const features = getFeatureLimits(subCtx.tier);
-      const existingCount = await db.select({ count: sql<number>`count(*)::int` })
-        .from(chapterVersions)
-        .where(and(
-          eq(chapterVersions.chapterId, input.chapterId),
-          eq(chapterVersions.versionType, input.versionType),
-          isNull(chapterVersions.deletedAt),
-        ));
-      if ((existingCount[0]?.count ?? 0) >= features.maxVersionsPerType) {
-        throw new TRPCError({
-          code: 'BAD_REQUEST',
-          message: `${input.versionType === 'task_brief' ? '任务书' : input.versionType === 'final' ? '定稿' : '草稿'}版本已达上限（${subCtx.isPremium ? '付费' : '免费'}用户 ${features.maxVersionsPerType} 个），请删除旧版本后再保存`,
-        });
-      }
-
-      // 获取当前最大版本号（用 desc + limit 1 代替全量查询）
+      // 获取当前最大版本号
       const [latest] = await db.select({ versionNumber: chapterVersions.versionNumber })
         .from(chapterVersions)
         .where(eq(chapterVersions.chapterId, input.chapterId))
@@ -608,7 +583,18 @@ export const projectRouter = router({
         updatedAt: new Date(),
       }).where(eq(chapters.id, input.chapterId));
 
-      return version;
+      // 内容指纹检测（非阻塞）
+      let warning: { templateId: string } | undefined;
+      if (input.content.length >= 200) {
+        try {
+          const result = await checkContentFingerprint(input.content);
+          if (result.matched && result.templateId) {
+            warning = { templateId: result.templateId };
+          }
+        } catch { /* fingerprint check should never block save */ }
+      }
+
+      return { ...version, warning };
     }),
 
   // 获取章节版本列表
@@ -937,6 +923,8 @@ export const projectRouter = router({
       let finalCount = 0;
       let totalWords = 0;
       let recentChapter: { id: string; title: string; updatedAt: Date | null } | null = null;
+      let firstChapter: { id: string; title: string } | null = null;
+      let firstUnfinished: { id: string; title: string } | null = null;
 
       if (volIds.length > 0) {
         for (const volId of volIds) {
@@ -959,6 +947,14 @@ export const projectRouter = router({
               if (!recentChapter || (ch.updatedAt && (!recentChapter.updatedAt || ch.updatedAt > recentChapter.updatedAt))) {
                 recentChapter = { id: ch.id, title: ch.title, updatedAt: ch.updatedAt };
               }
+              // Track first chapter (first volume → first unit → first chapter by sort order)
+              if (!firstChapter) {
+                firstChapter = { id: ch.id, title: ch.title };
+              }
+              // Track first unfinished chapter (not 'final')
+              if (!firstUnfinished && ch.status !== 'final') {
+                firstUnfinished = { id: ch.id, title: ch.title };
+              }
             }
           }
         }
@@ -976,6 +972,8 @@ export const projectRouter = router({
         totalWords,
         settingCount: settingCount[0]?.count ?? 0,
         recentChapter,
+        firstChapter,
+        firstUnfinished,
       };
     }),
 
@@ -1009,5 +1007,120 @@ export const projectRouter = router({
       return db.select().from(aiRoles)
         .where(eq(aiRoles.projectId, input.projectId))
         .orderBy(asc(aiRoles.createdAt));
+    }),
+
+  // ========== 修改日志 ==========
+  saveEditLog: protectedProcedure
+    .input(z.object({
+      projectId: z.string().uuid(),
+      entityType: z.enum(['volume', 'unit', 'chapter', 'setting']),
+      entityId: z.string().uuid(),
+      fieldName: z.string().max(50),
+      oldValue: z.string().optional(),
+      newValue: z.string().optional(),
+      editReason: z.string().optional(),
+      aiRole: z.string().max(50).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await verifyProjectOwner(input.projectId, ctx.userId);
+      const [log] = await db.insert(editLogs).values({
+        projectId: input.projectId,
+        entityType: input.entityType,
+        entityId: input.entityId as any,
+        fieldName: input.fieldName,
+        oldValue: input.oldValue || null,
+        newValue: input.newValue || null,
+        editReason: input.editReason || null,
+        aiRole: input.aiRole || null,
+      }).returning();
+      return log;
+    }),
+
+  listEditLogs: protectedProcedure
+    .input(z.object({
+      projectId: z.string().uuid(),
+      entityType: z.enum(['volume', 'unit', 'chapter', 'setting']).optional(),
+      entityId: z.string().uuid().optional(),
+      limit: z.number().default(10),
+      offset: z.number().default(0),
+    }))
+    .query(async ({ ctx, input }) => {
+      await verifyProjectOwner(input.projectId, ctx.userId);
+      const conditions = [eq(editLogs.projectId, input.projectId)];
+      if (input.entityType) conditions.push(eq(editLogs.entityType, input.entityType));
+      if (input.entityId) conditions.push(eq(editLogs.entityId, input.entityId as any));
+      return db.select().from(editLogs)
+        .where(and(...conditions))
+        .orderBy(desc(editLogs.createdAt))
+        .limit(input.limit)
+        .offset(input.offset);
+    }),
+
+  // ========== 文档导入 ==========
+  parseDocument: protectedProcedure
+    .input(z.object({
+      projectId: z.string().uuid(),
+      fileBase64: z.string(),
+      fileName: z.string(),
+      fileType: z.enum(['docx', 'pdf']),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await verifyProjectOwner(input.projectId, ctx.userId);
+
+      const buffer = Buffer.from(input.fileBase64, 'base64');
+      const MAX_SIZE = 10 * 1024 * 1024; // 10MB
+      if (buffer.length > MAX_SIZE) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: '文件大小不能超过 10MB' });
+      }
+
+      let text = '';
+      if (input.fileType === 'pdf') {
+        const { default: pdfParse } = await import('pdf-parse') as any;
+        const pdfData = await pdfParse(buffer);
+        text = pdfData.text;
+      } else {
+        const mammoth = await import('mammoth');
+        const result = await mammoth.extractRawText({ buffer });
+        text = result.value;
+      }
+
+      if (!text.trim()) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: '文档内容为空，无法解析' });
+      }
+
+      // 截断到 50K 字符（AI 上下文限制）
+      const MAX_CHARS = 50000;
+      const originalLength = text.length;
+      const truncated = text.length > MAX_CHARS;
+      text = text.slice(0, MAX_CHARS);
+
+      return { text, truncated, originalLength };
+    }),
+
+  // ========== 写作风格 ==========
+
+  // 获取写作风格
+  getWritingStyle: protectedProcedure
+    .input(z.object({ projectId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      await verifyProjectOwner(input.projectId, ctx.userId);
+      const [project] = await db.select({ writingStyle: projects.writingStyle })
+        .from(projects)
+        .where(eq(projects.id, input.projectId));
+      return project?.writingStyle || {};
+    }),
+
+  // 保存写作风格
+  saveWritingStyle: protectedProcedure
+    .input(z.object({
+      projectId: z.string().uuid(),
+      writingStyle: z.record(z.string()),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      await verifyProjectOwner(input.projectId, ctx.userId);
+      await db.update(projects)
+        .set({ writingStyle: input.writingStyle, updatedAt: new Date() })
+        .where(eq(projects.id, input.projectId));
+      return { ok: true };
     }),
 });

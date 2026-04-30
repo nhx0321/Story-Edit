@@ -2,7 +2,10 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { useParams } from 'next/navigation';
 import { trpc } from '@/lib/trpc';
+import { useWorkflowProgress } from '@/lib/use-workflow-progress';
+import { ProjectSidebar } from '@/components/layout/project-sidebar';
 import PublishDialog from '@/components/template/publish-dialog';
 
 type Tab = 'my' | 'create';
@@ -17,16 +20,30 @@ const categoryLabels: Record<string, string> = {
   ai_prompt: 'AI角色提示词',
 };
 
-const categoryImportTarget: Record<string, string> = {
-  methodology: '→ 优化文学编辑提示词',
-  structure: '→ 优化文学编辑提示词',
-  style: '→ 小说作者风格要求',
-  setting: '→ 设定页面 · 任务书调用',
-  ai_prompt: '→ AI 角色提示词',
+const aiRoleLabels: Record<string, string> = {
+  editor: '文学编辑',
+  setting_editor: '设定编辑',
+  writer: '正文作者',
 };
 
-export default function TemplatesPage({ params }: { params: { id: string } }) {
-  const projectId = params.id;
+const aiRoleColors: Record<string, string> = {
+  editor: 'bg-blue-100 text-blue-700',
+  setting_editor: 'bg-purple-100 text-purple-700',
+  writer: 'bg-green-100 text-green-700',
+};
+
+const categoryImportTarget: Record<string, string> = {
+  methodology: '→ 文学编辑',
+  structure: '→ 文学编辑',
+  style: '→ 正文作者',
+  setting: '→ 项目设定',
+  ai_prompt: '→ 同名AI角色',
+};
+
+export default function TemplatesPage() {
+  const { id: projectId } = useParams<{ id: string }>();
+  const progress = useWorkflowProgress(projectId);
+  const { data: projectData } = trpc.project.get.useQuery({ id: projectId });
   const [tab, setTab] = useState<Tab>('my');
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
   const utils = trpc.useUtils();
@@ -41,67 +58,76 @@ export default function TemplatesPage({ params }: { params: { id: string } }) {
     : myTemplates.filter(t => t.category === categoryFilter);
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-5xl mx-auto">
-        <Link href={`/project/${projectId}`} className="text-sm text-gray-500 hover:text-gray-900">&larr; 返回项目</Link>
-        <div className="flex items-center justify-between mt-4 mb-6">
-          <div>
-            <h1 className="text-2xl font-bold">模板</h1>
-            <p className="text-sm text-gray-500 mt-1">创作模板管理 · 从项目导入或手动创建</p>
-          </div>
-          <Link href="/marketplace"
-            className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition">
-            模板广场
-          </Link>
-        </div>
-
-        {/* Tab 切换 */}
-        <div className="flex gap-2 mb-4">
-          {([['my', '我的模板'], ['create', '模板创作']] as const).map(([key, label]) => (
-            <button key={key} onClick={() => setTab(key)}
-              className={`px-4 py-2 text-sm rounded-lg transition ${
-                tab === key ? 'bg-gray-900 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:border-gray-400'
-              }`}>
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {tab === 'my' ? (
-          <>
-            {/* 分类筛选 */}
-            <div className="flex gap-2 mb-4 flex-wrap">
-              {(Object.keys(categoryLabels) as CategoryFilter[]).map(f => (
-                <button key={f} onClick={() => setCategoryFilter(f)}
-                  className={`px-3 py-1.5 text-xs rounded-full transition ${
-                    categoryFilter === f ? 'bg-gray-900 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:border-gray-400'
-                  }`}>
-                  {categoryLabels[f]}
-                </button>
-              ))}
+    <div className="min-h-screen bg-gray-50 flex">
+      <ProjectSidebar
+        projectId={projectId}
+        projectName={projectData?.name || '项目'}
+        projectGenre={projectData?.genre}
+        projectStyle={projectData?.style}
+        currentPath="/templates"
+        progress={progress}
+      />
+      <main className="flex-1 p-8">
+        <div className="max-w-5xl mx-auto">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h1 className="text-2xl font-bold">模板</h1>
+              <p className="text-sm text-gray-500 mt-1">创作模板管理 · 从项目导入或手动创建</p>
             </div>
+            <Link href="/marketplace"
+              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:border-gray-500 transition">
+              模板广场
+            </Link>
+          </div>
 
-            {isLoading ? (
-              <div className="text-center py-16 text-gray-400">加载中...</div>
-            ) : filtered.length === 0 ? (
-              <div className="text-center py-16 text-gray-400 bg-white rounded-xl border border-gray-200">
-                <p className="mb-2">还没有模板</p>
-                <button onClick={() => setTab('create')}
-                  className="text-gray-900 font-medium hover:underline">去模板创作导入第一个模板</button>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {filtered.map(t => (
-                  <TemplateCard key={t.id} template={t} projectId={projectId}
-                    onDelete={() => deleteTemplate.mutate({ id: t.id })} />
+          {/* Tab 切换 */}
+          <div className="flex gap-2 mb-4">
+            {([['my', '我的模板'], ['create', '模板创作']] as const).map(([key, label]) => (
+              <button key={key} onClick={() => setTab(key)}
+                className={`px-4 py-2 text-sm rounded-lg transition ${
+                  tab === key ? 'bg-gray-900 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:border-gray-400'
+                }`}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {tab === 'my' ? (
+            <>
+              {/* 分类筛选 */}
+              <div className="flex gap-2 mb-4 flex-wrap">
+                {(Object.keys(categoryLabels) as CategoryFilter[]).map(f => (
+                  <button key={f} onClick={() => setCategoryFilter(f)}
+                    className={`px-3 py-1.5 text-xs rounded-full transition ${
+                      categoryFilter === f ? 'bg-gray-900 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:border-gray-400'
+                    }`}>
+                    {categoryLabels[f]}
+                  </button>
                 ))}
               </div>
-            )}
-          </>
-        ) : (
-          <CreateTab projectId={projectId} />
-        )}
-      </div>
+
+              {isLoading ? (
+                <div className="text-center py-16 text-gray-400">加载中...</div>
+              ) : filtered.length === 0 ? (
+                <div className="text-center py-16 text-gray-400 bg-white rounded-xl border border-gray-200">
+                  <p className="mb-2">还没有模板</p>
+                  <button onClick={() => setTab('create')}
+                    className="text-gray-900 font-medium hover:underline">去模板创作导入第一个模板</button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {filtered.map(t => (
+                    <TemplateCard key={t.id} template={t} projectId={projectId}
+                      onDelete={() => deleteTemplate.mutate({ id: t.id })} />
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <CreateTab projectId={projectId} />
+          )}
+        </div>
+      </main>
     </div>
   );
 }
@@ -113,6 +139,7 @@ function TemplateCard({ template, projectId, onDelete }: {
     id: string; title: string; content: string; category?: string | null;
     description?: string | null; source: string | null; canRepublish?: boolean | null;
     auditStatus?: string | null; templateId?: string | null;
+    aiTargetRole?: string | null;
     createdAt: string; updatedAt: string;
   };
   projectId: string;
@@ -157,6 +184,11 @@ function TemplateCard({ template, projectId, onDelete }: {
             {template.category && (
               <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
                 {categoryLabels[template.category] || template.category}
+              </span>
+            )}
+            {template.aiTargetRole && aiRoleLabels[template.aiTargetRole] && (
+              <span className={`text-xs px-2 py-0.5 rounded-full ${aiRoleColors[template.aiTargetRole]}`}>
+                {aiRoleLabels[template.aiTargetRole]}
               </span>
             )}
             <span className="text-xs text-gray-400">{categoryImportTarget[template.category || ''] || ''}</span>
@@ -212,6 +244,7 @@ function TemplateCard({ template, projectId, onDelete }: {
           userTemplateId={template.id}
           initialTitle={template.title}
           initialCategory={template.category}
+          initialAiTargetRole={template.aiTargetRole}
           onClose={() => setShowPublish(false)}
           onSuccess={() => { setShowPublish(false); setEditing(false); }}
         />
@@ -262,7 +295,7 @@ function CreateTab({ projectId }: { projectId: string }) {
           </div>
           <div className="flex items-start gap-2">
             <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full shrink-0">正文风格</span>
-            <span className="text-gray-500 text-xs">章节正文参考 → 小说作者风格要求</span>
+            <span className="text-gray-500 text-xs">章节正文参考 → 正文作者风格要求</span>
           </div>
           <div className="flex items-start gap-2">
             <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full shrink-0">设定</span>
@@ -394,6 +427,7 @@ function NewTemplateDialog({ projectId, onClose }: { projectId: string; onClose:
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [category, setCategory] = useState('methodology');
+  const [aiTargetRole, setAiTargetRole] = useState('');
   const [description, setDescription] = useState('');
   const utils = trpc.useUtils();
 
@@ -408,7 +442,7 @@ function NewTemplateDialog({ projectId, onClose }: { projectId: string; onClose:
 
   const handleCreate = () => {
     if (!title.trim() || !content.trim()) { alert('标题和内容不能为空'); return; }
-    createMutation.mutate({ projectId, title, content, category, description: description || undefined });
+    createMutation.mutate({ projectId, title, content, category, aiTargetRole: aiTargetRole || undefined, description: description || undefined });
   };
 
   return (
@@ -423,6 +457,17 @@ function NewTemplateDialog({ projectId, onClose }: { projectId: string; onClose:
               <option key={k} value={k}>{v}</option>
             ))}
           </select>
+        </div>
+        <div className="mb-4">
+          <label className="block text-xs font-medium text-gray-600 mb-1">对应 AI 角色</label>
+          <select value={aiTargetRole} onChange={e => setAiTargetRole(e.target.value)}
+            className="w-full text-sm border border-gray-200 rounded px-3 py-2">
+            <option value="">无</option>
+            <option value="editor">文学编辑</option>
+            <option value="setting_editor">设定编辑</option>
+            <option value="writer">正文作者</option>
+          </select>
+          <p className="text-xs text-gray-400 mt-1">选择该模板导入后会应用到哪个 AI 角色</p>
         </div>
         <div className="mb-4">
           <label className="block text-xs font-medium text-gray-600 mb-1">标题</label>

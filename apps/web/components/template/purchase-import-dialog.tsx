@@ -109,7 +109,7 @@ export function PurchaseImportDialog({ templateId, templateTitle, onClose, onImp
             <p className="text-sm text-amber-800">
               {duplicateInfo
                 ? `该项目已导入过此模板，将以「${duplicateInfo.version}」重新导入`
-                : '确认花费 10 精灵豆导入此模板？'}
+                : '确认将此已购模板免费导入到所选项目？'}
             </p>
           </div>
         )}

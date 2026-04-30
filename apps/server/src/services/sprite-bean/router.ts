@@ -1,15 +1,18 @@
-// 精灵豆 tRPC 路由
+// 精灵豆 tRPC 路由（简化版 — 移除VIP兑换和道具消费，仅保留模板市场用豆）
 import { z } from 'zod';
 import { eq, desc } from 'drizzle-orm';
 import { TRPCError } from '@trpc/server';
-import { router, publicProcedure, protectedProcedure, adminProcedure } from '../../trpc';
+import { router, protectedProcedure, adminProcedure } from '../../trpc';
 import { db } from '../../db';
-import { userSprites, spriteBeanTransactions, rechargeOrders, spriteItems, userSpriteItems } from '../../db/schema';
+import { userSprites, rechargeOrders } from '../../db/schema';
 import {
-  recordBeanTransaction, getLevelProgress, createRechargeOrder,
-  confirmRechargePayment, purchaseItem, useItem,
-  getBeanBalanceAndTransactions, getLevelByXp, getConvertibleDays,
+  getLevelProgress, createRechargeOrder,
+  confirmRechargePayment,
+  getBeanBalanceAndTransactions, getLevelByXp,
+  recordBeanTransaction, BEAN_RATE,
 } from '../sprite/bean-service';
+import { userTokenAccounts } from '../../db/schema';
+import { UNITS_PER_YUAN } from '../token-relay/token-billing';
 
 // 升级所需天数（与原有逻辑一致）
 const LEVEL_DAYS: Record<number, number> = {
@@ -49,37 +52,22 @@ export const spriteBeanRouter = router({
       return confirmRechargePayment(input.orderId, input.transactionId);
     }),
 
-  // 购买道具（消耗精灵豆）
-  purchaseItem: protectedProcedure
-    .input(z.object({ itemCode: z.string() }))
-    .mutation(async ({ ctx, input }) => {
-      return purchaseItem(ctx.userId, input.itemCode);
-    }),
+  // 查询用户充值订单列表
+  getMyOrders: protectedProcedure.query(async ({ ctx }) => {
+    const orders = await db.select()
+      .from(rechargeOrders)
+      .where(eq(rechargeOrders.userId, ctx.userId))
+      .orderBy(desc(rechargeOrders.createdAt))
+      .limit(20);
 
-  // 使用道具（加速生长）
-  useItem: protectedProcedure
-    .input(z.object({ itemCode: z.string() }))
-    .mutation(async ({ ctx, input }) => {
-      return useItem(ctx.userId, input.itemCode);
-    }),
-
-  // 查询道具库存
-  getInventory: protectedProcedure.query(async ({ ctx }) => {
-    const items = await db.select()
-      .from(spriteItems)
-      .where(eq(spriteItems.isActive, true));
-
-    const userItemRecords = await db.select()
-      .from(userSpriteItems)
-      .where(eq(userSpriteItems.userId, ctx.userId));
-
-    const beanTransactions = await db.select()
-      .from(spriteBeanTransactions)
-      .where(eq(spriteBeanTransactions.userId, ctx.userId))
-      .orderBy(desc(spriteBeanTransactions.createdAt))
-      .limit(50);
-
-    return { items, userItems: userItemRecords, beanTransactions };
+    return orders.map(o => ({
+      id: o.id,
+      amountCents: o.amountCents,
+      beanAmount: o.beanAmount,
+      paymentMethod: o.paymentMethod,
+      status: o.status,
+      createdAt: o.createdAt,
+    }));
   }),
 
   // 查询升级进度（剩余经验/天数）
@@ -111,9 +99,66 @@ export const spriteBeanRouter = router({
       totalBeanSpent: sprite.totalBeanSpent ?? 0,
       totalXp,
       convertedDays: sprite.convertedDays ?? 0,
-      convertibleDays: getConvertibleDays(sprite.totalBeanSpent ?? 0, sprite.convertedDays ?? 0),
     };
   }),
+
+  // 余额→精灵豆兑换（1元=100豆，从Token余额扣除）
+  exchangeBalanceToBeans: protectedProcedure
+    .input(z.object({ amountYuan: z.number().min(1).max(10000).int() }))
+    .mutation(async ({ ctx, input }) => {
+      const beanAmount = input.amountYuan * BEAN_RATE;
+      const tokenCost = input.amountYuan * UNITS_PER_YUAN;
+
+      // 扣Token余额
+      const [account] = await db.select({ balance: userTokenAccounts.balance })
+        .from(userTokenAccounts)
+        .where(eq(userTokenAccounts.userId, ctx.userId));
+      if (!account || (account.balance ?? 0) < tokenCost) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Token余额不足' });
+      }
+      await db.update(userTokenAccounts)
+        .set({ balance: (account.balance ?? 0) - tokenCost, updatedAt: new Date() })
+        .where(eq(userTokenAccounts.userId, ctx.userId));
+
+      // 加精灵豆
+      const newBeanBalance = await recordBeanTransaction({
+        userId: ctx.userId,
+        type: 'recharge',
+        amount: beanAmount,
+        description: `余额兑换 ${beanAmount} 精灵豆（${input.amountYuan}元）`,
+      });
+
+      return { beanAmount, newBeanBalance };
+    }),
+
+  // 精灵豆→余额兑换（100豆=1元，转入Token余额，最小1精灵豆）
+  exchangeBeansToBalance: protectedProcedure
+    .input(z.object({ beanAmount: z.number().min(1).int() }))
+    .mutation(async ({ ctx, input }) => {
+      const amountYuan = input.beanAmount / BEAN_RATE;
+      const tokenAmount = amountYuan * UNITS_PER_YUAN;
+
+      // 扣精灵豆
+      const newBeanBalance = await recordBeanTransaction({
+        userId: ctx.userId,
+        type: 'consume',
+        amount: -input.beanAmount,
+        description: `精灵豆兑换余额 ${input.beanAmount} 豆 → ${amountYuan}元`,
+      });
+
+      // 加Token余额
+      const [account] = await db.select({ balance: userTokenAccounts.balance })
+        .from(userTokenAccounts)
+        .where(eq(userTokenAccounts.userId, ctx.userId));
+      if (!account) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'Token账户不存在' });
+      }
+      await db.update(userTokenAccounts)
+        .set({ balance: (account.balance ?? 0) + tokenAmount, updatedAt: new Date() })
+        .where(eq(userTokenAccounts.userId, ctx.userId));
+
+      return { tokenAmount, newBeanBalance };
+    }),
 
   // ===== 管理员端 =====
 

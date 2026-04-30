@@ -1,249 +1,234 @@
 'use client';
 
-import { useState } from 'react';
 import Link from 'next/link';
 import { trpc } from '@/lib/trpc';
 
-const providers = [
-  { id: 'longcat', name: 'LongCat', desc: '零成本上手，官方可申请每日5000万token免费额度', tag: '免费模型', tagColor: 'bg-emerald-100 text-emerald-700', docsUrl: '/ai-config/docs/longcat' },
-  { id: 'deepseek', name: 'DeepSeek', desc: '高性价比，中文表现优秀，API调用付费', tag: '付费模型', tagColor: 'bg-blue-100 text-blue-700', docsUrl: '/ai-config/docs/deepseek' },
-  { id: 'qwen', name: '通义千问', desc: '官网注册付费，撰写能力优质', tag: '付费模型', tagColor: 'bg-amber-100 text-amber-700', docsUrl: '/ai-config/docs/qwen' },
-  { id: 'custom', name: '自定义（OpenAI兼容）', desc: '填写任意OpenAI兼容API地址', tag: '', tagColor: '', docsUrl: '/ai-config/docs/custom' },
-];
+function toYuan(amount: number): string {
+  return (amount / 10_000_000).toFixed(2);
+}
 
-// 各 provider 默认 API 地址和模型
-const PROVIDER_DEFAULTS: Record<string, { baseUrl: string; model: string }> = {
-  longcat: { baseUrl: 'https://api.longcat.chat/anthropic', model: 'LongCat-Flash-Thinking-2601' },
-  deepseek: { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
-  qwen: { baseUrl: 'https://dashscope.aliyuncs.com/apps/anthropic', model: 'qwen3.6-plus' },
-  custom: { baseUrl: '', model: '' },
-};
+function formatPrice(pricePer1m: number): string {
+  if (pricePer1m === 0) return '免费';
+  return `¥${(pricePer1m / 100).toFixed(2)}/百万Token`;
+}
 
 export default function AIConfigPage() {
   const utils = trpc.useUtils();
-  const { data: configs = [] } = trpc.ai.listConfigs.useQuery();
-  const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ provider: '', apiKey: '', baseUrl: '', defaultModel: '' });
-  const [testingId, setTestingId] = useState('');
-  const [testResult, setTestResult] = useState<Record<string, 'success' | 'fail'>>({});
-  const [testError, setTestError] = useState<Record<string, string>>({});
-
-  const saveConfig = trpc.ai.saveConfig.useMutation({
-    onSuccess: () => {
-      utils.ai.listConfigs.invalidate();
-      setForm({ provider: '', apiKey: '', baseUrl: '', defaultModel: '' });
-      setAdding(false);
+  const { data: models = [] } = trpc.token.getAllModels.useQuery();
+  const { data: account } = trpc.token.getAccount.useQuery();
+  const { data: preferred } = trpc.token.getPreferredModel.useQuery();
+  const setPreferred = trpc.token.setPreferredModel.useMutation({
+    onSuccess: async () => {
+      await Promise.all([
+        utils.token.getPreferredModel.invalidate(),
+        utils.token.getAllModels.invalidate(),
+      ]);
     },
   });
-  const deleteConfig = trpc.ai.deleteConfig.useMutation({
-    onSuccess: () => utils.ai.listConfigs.invalidate(),
-  });
-  const testConnection = trpc.ai.testConnection.useMutation();
 
-  const selectProvider = (id: string) => {
-    const defaults = PROVIDER_DEFAULTS[id];
-    setForm(f => ({
-      ...f,
-      provider: id,
-      baseUrl: defaults?.baseUrl || '',
-      defaultModel: defaults?.model || '',
-    }));
+  const balance = account?.balance ?? 0;
+  const DEFAULT_MODEL = 'longcat/LongCat-Flash-Thinking-2601';
+  const selectedModelId = preferred?.preferredModel || DEFAULT_MODEL;
+
+  const isModelFree = (m: { inputPricePer1m: number; outputPricePer1m: number }) =>
+    m.inputPricePer1m === 0 && m.outputPricePer1m === 0;
+
+  const hasLockedPaidModels = models.some((m: any) => !m.canAccess && !isModelFree(m));
+
+  const isModelPremium = (m: { groupName?: string }) => m.groupName === 'premium';
+
+  const handleSelectModel = (modelKey: string, canAccess: boolean) => {
+    if (!canAccess) return;
+    setPreferred.mutate({ modelId: selectedModelId === modelKey ? null : modelKey });
   };
 
-  const handleAdd = () => {
-    if (!form.provider || !form.apiKey) return;
-    saveConfig.mutate({
-      provider: form.provider as 'deepseek' | 'longcat' | 'qwen' | 'custom',
-      name: providers.find(p => p.id === form.provider)?.name || form.provider,
-      apiKey: form.apiKey,
-      baseUrl: form.baseUrl || undefined,
-      defaultModel: form.defaultModel || undefined,
-    });
-  };
+  // 按 provider 分组
+  const modelGroups: Record<string, typeof models> = {};
+  for (const m of models) {
+    if (!modelGroups[m.provider]) modelGroups[m.provider] = [];
+    modelGroups[m.provider].push(m);
+  }
 
-  const handleTest = async (configId: string) => {
-    setTestingId(configId);
-    setTestResult(r => ({ ...r, [configId]: 'success' }));
-    setTestError(r => ({ ...r, [configId]: '' }));
-    try {
-      const result = await testConnection.mutateAsync({ configId });
-      if (result.ok) {
-        setTestResult(r => ({ ...r, [configId]: 'success' }));
-        setTestError(r => ({ ...r, [configId]: result.error || '未知错误' }));
-      } else {
-        setTestResult(r => ({ ...r, [configId]: 'fail' }));
-        setTestError(r => ({ ...r, [configId]: result.error || '未知错误' }));
-      }
-    } catch (e: any) {
-      setTestResult(r => ({ ...r, [configId]: 'fail' }));
-      setTestError(r => ({ ...r, [configId]: e?.message || '请求失败' }));
-    }
-    setTestingId('');
+  const providerInfo: Record<string, { name: string; color: string }> = {
+    longcat: { name: 'LongCat', color: 'border-emerald-300' },
+    deepseek: { name: 'DeepSeek', color: 'border-blue-300' },
+    qwen: { name: '通义千问', color: 'border-amber-300' },
+    openai: { name: 'OpenAI', color: 'border-gray-300' },
+    anthropic: { name: 'Anthropic', color: 'border-purple-300' },
   };
 
   return (
-    <main className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-3xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
+    <div className="max-w-4xl mx-auto">
+      {/* 余额概览 */}
+      <div className="bg-gradient-to-r from-gray-900 to-gray-800 rounded-xl p-6 mb-6 text-white">
+        <div className="flex items-center justify-between">
           <div>
-            <Link href="/dashboard" className="text-sm text-gray-500 hover:text-gray-900">&larr; 返回工作台</Link>
-            <h1 className="text-2xl font-bold mt-4 mb-1">AI 模型配置</h1>
-            <p className="text-gray-500 text-sm">管理 AI 模型 API Key，可配置多个模型随时切换</p>
+            <p className="text-sm text-gray-300 mb-1">Token 余额</p>
+            <p className="text-3xl font-bold">{balance.toLocaleString()}</p>
+            <p className="text-xs text-gray-400 mt-1">≈ ¥{toYuan(balance)}</p>
           </div>
-          <div className="flex items-center gap-3">
-            <Link href="/ai-config/guide"
-              className="px-4 py-2 text-sm font-medium text-blue-600 hover:text-blue-800 transition">
-              完整指南
+          <div className="flex gap-3">
+            <Link href="/ai-config/consumption"
+              className="px-4 py-2 bg-white/10 text-white text-sm font-medium rounded-lg hover:bg-white/20 transition">
+              站内用量统计
             </Link>
-            <Link href="/ai-config/usage"
-              className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 transition">
-              用量统计
+            <Link href="/ai-config/recharge"
+              className="px-4 py-2 bg-white text-gray-900 text-sm font-medium rounded-lg hover:bg-gray-100 transition">
+              充值
             </Link>
           </div>
         </div>
+      </div>
 
-        {configs.length > 0 && (
-          <div className="space-y-3 mb-6">
-            {configs.map(c => {
-              const p = providers.find(p => p.id === c.provider);
-              return (
-                <div key={c.id} className="bg-white rounded-xl border border-gray-200 p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <p className="font-medium">{p?.name || c.provider}</p>
-                        {p?.docsUrl && (
-                          <Link href={p.docsUrl}
-                            className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 transition">
-                            文档
-                          </Link>
-                        )}
-                      </div>
-                      <p className="text-sm text-gray-500">{c.name}</p>
-                      {c.baseUrl && <p className="text-xs text-gray-400 mt-0.5 truncate max-w-xs">{c.baseUrl}</p>}
-                      {c.defaultModel && <p className="text-xs text-gray-400">模型: {c.defaultModel}</p>}
-                      {testResult[c.id] === 'success' && <span className="text-xs text-green-600 mt-1 block">连接正常</span>}
-                      {testResult[c.id] === 'fail' && (
-                        <div className="mt-1">
-                          <span className="text-xs text-red-600">连接失败</span>
-                          {testError[c.id] && (
-                            <p className="text-xs text-red-500 mt-0.5 break-words">{testError[c.id]}</p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex gap-2">
-                      <button onClick={() => handleTest(c.id)} disabled={testingId === c.id}
-                        className="text-sm text-gray-500 hover:text-gray-900">
-                        {testingId === c.id ? '测试中...' : '测试'}
-                      </button>
-                      <button className="text-sm text-red-500 hover:text-red-700"
-                        onClick={() => deleteConfig.mutate({ id: c.id })}>删除</button>
-                    </div>
+      {/* 当前选择模型 */}
+      {selectedModelId ? (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs text-blue-500 mb-0.5">当前使用模型</p>
+              <p className="font-bold text-blue-900">{selectedModelId}</p>
+            </div>
+            <p className="text-xs text-blue-600">点击下方模型可切换</p>
+          </div>
+        </div>
+      ) : (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
+          <div className="flex items-start gap-3">
+            <span className="text-amber-500 shrink-0">⚠</span>
+            <div>
+              <p className="font-medium text-amber-900">尚未选择模型</p>
+              <p className="text-sm text-amber-700 mt-1">
+                点击下方模型将其设为默认使用模型。{hasLockedPaidModels ? '当前账号仅可使用 LongCat 免费模型。' : balance <= 0 ? '当前余额为 0，仅可使用免费模型。' : ''}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 非付费提示 */}
+      {hasLockedPaidModels && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">
+          <div className="flex items-center justify-between gap-4">
+            <p className="text-sm text-amber-800">
+              当前账号仅可使用 LongCat 免费模型。DeepSeek、通义千问等收费模型仅对付费用户开放。
+            </p>
+            <Link href="/ai-config/recharge"
+              className="px-4 py-2 bg-amber-500 text-white text-sm font-medium rounded-lg hover:bg-amber-600 transition shrink-0">
+              去充值
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {/* 余额为0提示 */}
+      {balance <= 0 && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-start gap-3">
+              <span className="text-red-500 shrink-0">ℹ</span>
+              <p className="text-sm text-red-700">余额为 0，仅可使用 LongCat 免费模型。充值成为付费用户后可解锁收费模型。</p>
+            </div>
+            <Link href="/ai-config/recharge"
+              className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition shrink-0 ml-4">
+              去充值
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {/* 模型广场 */}
+      <h2 className="text-xl font-bold mb-4">选择模型</h2>
+
+      <div className="space-y-4">
+        {Object.entries(modelGroups).map(([provider, providerModels]) => {
+          const info = providerInfo[provider] || { name: provider, color: 'border-gray-300' };
+          const allFree = providerModels.every(m => isModelFree(m));
+          return (
+            <div key={provider} className={`bg-white rounded-xl border-2 ${info.color} overflow-hidden`}>
+              <div className="px-5 py-3 bg-gray-50 border-b border-gray-100">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-gray-900">{info.name}</h3>
+                    {allFree && (
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-medium">
+                        免费
+                      </span>
+                    )}
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
-
-        {!adding ? (
-          <button onClick={() => setAdding(true)} className="w-full py-3 border-2 border-dashed border-gray-300 rounded-xl text-gray-500 hover:border-gray-400 hover:text-gray-700 transition">
-            + 添加 AI 模型
-          </button>
-        ) : (
-          <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <h3 className="font-semibold mb-4">选择模型</h3>
-            <div className="space-y-2 mb-4">
-              {providers.map(p => (
-                <div key={p.id} className="flex items-center justify-between gap-3">
-                  <button onClick={() => selectProvider(p.id)}
-                    className={`flex-1 text-left p-3 rounded-lg border transition ${form.provider === p.id ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-400'}`}>
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium text-sm">{p.name}</span>
-                      {p.tag && <span className={`text-xs ${p.tagColor} px-2 py-0.5 rounded-full`}>{p.tag}</span>}
+              </div>
+              <div className="divide-y divide-gray-100">
+                {providerModels.map((m: any) => {
+                  const modelKey = `${m.provider}/${m.modelId}`;
+                  const isSelected = selectedModelId === modelKey;
+                  const mFree = isModelFree(m);
+                  const mPremium = isModelPremium(m);
+                  const mDisabled = !m.canAccess;
+                  return (
+                    <div
+                      key={m.id}
+                      onClick={() => !mDisabled && handleSelectModel(modelKey, !mDisabled)}
+                      className={`px-5 py-4 flex items-center justify-between transition ${
+                        mDisabled
+                          ? 'cursor-not-allowed opacity-60'
+                          : isSelected
+                            ? 'bg-gray-50 ring-2 ring-inset ring-gray-900 cursor-pointer'
+                            : 'hover:bg-gray-50 cursor-pointer'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                          mDisabled
+                            ? 'border-gray-200'
+                            : isSelected
+                              ? 'border-gray-900'
+                              : 'border-gray-300'
+                        }`}>
+                          {isSelected && <div className="w-2 h-2 rounded-full bg-gray-900" />}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <p className={`font-medium text-sm ${mDisabled ? 'text-gray-400' : 'text-gray-900'}`}>{m.modelName || m.modelId}</p>
+                            {mFree && (
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">免费</span>
+                            )}
+                            {mPremium && (
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">付费</span>
+                            )}
+                            {mDisabled && (
+                              <span className="text-xs text-red-500">仅付费用户可用</span>
+                            )}
+                          </div>
+                          <p className="text-xs text-gray-400 mt-0.5 font-mono">{m.modelId}</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className={`text-sm ${mDisabled ? 'text-gray-400' : 'text-gray-700'}`}>
+                          输入 {formatPrice(m.inputPricePer1m)} / 输出 {formatPrice(m.outputPricePer1m)}
+                        </p>
+                      </div>
                     </div>
-                    <p className="text-xs text-gray-500 mt-0.5">{p.desc}</p>
-                  </button>
-                  {p.docsUrl && form.provider === p.id && (
-                    <Link href={p.docsUrl}
-                      className="px-3 py-3 text-sm font-medium text-gray-500 hover:text-gray-900 border border-gray-200 rounded-lg hover:bg-gray-50 transition">
-                      文档
-                    </Link>
-                  )}
-                </div>
-              ))}
+                  );
+                })}
+              </div>
             </div>
-            {form.provider === 'longcat' && (
-              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 mb-4">
-                <h4 className="font-medium text-emerald-900 mb-2">LongCat 免费模型接入指引</h4>
-                <ol className="text-sm text-emerald-800 space-y-1.5 list-decimal list-inside">
-                  <li>访问 <span className="font-mono bg-emerald-100 px-1 rounded">longcat.chat</span> 注册账号</li>
-                  <li>进入「API广场」，点击「申请更多额度」</li>
-                  <li>填写简单问题后即可获得每日 5000 万 token 免费额度</li>
-                  <li>在 API 管理页面创建 API Key</li>
-                  <li>将 API Key 粘贴到下方输入框</li>
-                </ol>
-              </div>
-            )}
-            {form.provider === 'deepseek' && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                <h4 className="font-medium text-blue-900 mb-2">DeepSeek 付费模型接入指引</h4>
-                <ol className="text-sm text-blue-800 space-y-1.5 list-decimal list-inside">
-                  <li>访问 <span className="font-mono bg-blue-100 px-1 rounded">https://platform.deepseek.com/</span> 注册账号</li>
-                  <li>在控制台完成实名认证和充值</li>
-                  <li>进入「API Keys」页面创建新的 API Key</li>
-                  <li>将 API Key 粘贴到下方输入框，API 地址和模型已自动填充</li>
-                </ol>
-              </div>
-            )}
-            {form.provider === 'qwen' && (
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
-                <h4 className="font-medium text-amber-900 mb-2">通义千问 付费模型接入指引</h4>
-                <ol className="text-sm text-amber-800 space-y-1.5 list-decimal list-inside">
-                  <li>访问 <span className="font-mono bg-amber-100 px-1 rounded">https://bailian.console.aliyun.com/</span> 登录阿里云账号</li>
-                  <li>在百炼控制台开通模型服务并充值</li>
-                  <li>进入「API-KEY管理」页面创建 API Key</li>
-                  <li>将 API Key 粘贴到下方输入框，API 地址和模型已自动填充</li>
-                </ol>
-              </div>
-            )}
-            {form.provider && (
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">API Key</label>
-                  <input type="password" value={form.apiKey}
-                    onChange={e => setForm(f => ({ ...f, apiKey: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900"
-                    placeholder="sk-..." />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">API 地址</label>
-                  <input type="url" value={form.baseUrl}
-                    onChange={e => setForm(f => ({ ...f, baseUrl: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 font-mono text-sm"
-                    placeholder="https://api.example.com/v1" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">模型名称</label>
-                  <input type="text" value={form.defaultModel}
-                    onChange={e => setForm(f => ({ ...f, defaultModel: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900 font-mono text-sm"
-                    placeholder="如 gpt-4o、claude-sonnet-4-20250514" />
-                </div>
-                <div className="flex gap-3 pt-2">
-                  <button onClick={() => { setAdding(false); setForm({ provider: '', apiKey: '', baseUrl: '', defaultModel: '' }); }}
-                    className="px-4 py-2 text-gray-600 hover:text-gray-900">取消</button>
-                  <button onClick={handleAdd} disabled={saveConfig.isLoading}
-                    className="flex-1 py-2 bg-gray-900 text-white rounded-lg font-medium hover:bg-gray-800 transition disabled:opacity-50">
-                    {saveConfig.isLoading ? '保存中...' : '保存'}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+          );
+        })}
       </div>
-    </main>
+
+      {models.length === 0 && (
+        <div className="text-center py-16 text-gray-400">
+          暂无可用模型，请联系管理员配置
+        </div>
+      )}
+
+      <div className="mt-8 text-center">
+        <p className="text-sm text-gray-500 mb-3">需要将 AI 能力接入你的应用？</p>
+        <Link href="/ai-config/api-keys"
+          className="inline-block px-5 py-2.5 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition">
+          创建 API Key（站外接入）
+        </Link>
+      </div>
+    </div>
   );
 }

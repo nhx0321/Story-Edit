@@ -18,6 +18,10 @@ export default function ProfilePage() {
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   const [showPasswordChange, setShowPasswordChange] = useState(false);
   const [passwordForm, setPasswordForm] = useState({ current: '', new: '', confirm: '' });
+  const [phoneInput, setPhoneInput] = useState('');
+  const [emailInput, setEmailInput] = useState('');
+  const [showBindPhone, setShowBindPhone] = useState(false);
+  const [showBindEmail, setShowBindEmail] = useState(false);
 
   const { data: profile } = trpc.userAccount.getProfile.useQuery(undefined, { enabled: !!token });
   const updateProfile = trpc.userAccount.updateProfile.useMutation({
@@ -28,6 +32,27 @@ export default function ProfilePage() {
     },
   });
   const changePassword = trpc.userAccount.changePassword.useMutation();
+  const utils = trpc.useUtils();
+
+  const bindPhone = trpc.auth.bindPhone.useMutation({
+    onSuccess: () => {
+      utils.userAccount.getProfile.invalidate();
+      setShowBindPhone(false);
+      setPhoneInput('');
+      alert('手机号绑定成功');
+    },
+    onError: (err) => alert(err.message),
+  });
+
+  const bindEmail = trpc.auth.bindEmail.useMutation({
+    onSuccess: () => {
+      utils.userAccount.getProfile.invalidate();
+      setShowBindEmail(false);
+      setEmailInput('');
+      alert('邮箱绑定成功');
+    },
+    onError: (err) => alert(err.message),
+  });
 
   const handlePasswordChange = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -86,7 +111,7 @@ export default function ProfilePage() {
         <Link href="/settings" className="text-sm text-gray-500 hover:text-gray-900">&larr; 返回设置</Link>
         <h1 className="text-2xl font-bold mt-4 mb-8">个人信息</h1>
 
-        {/* VIP 信息 */}
+        {/* 用户信息 */}
         {profile && (
           <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
             <div className="flex items-center gap-4">
@@ -95,15 +120,6 @@ export default function ProfilePage() {
                 <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center text-3xl border-2 border-gray-200 cursor-pointer"
                   onClick={() => setShowAvatarPicker(!showAvatarPicker)}>
                   {displayAvatar}
-                </div>
-                {/* VIP 等级角标 */}
-                <div className={`absolute -bottom-1 -right-1 px-1.5 py-0.5 rounded text-xs font-medium text-white ${
-                  profile.vipLevel === '年费VIP' ? 'bg-yellow-500'
-                  : profile.vipLevel === 'VIP' ? 'bg-blue-500'
-                  : profile.vipLevel === '体验VIP' ? 'bg-green-500'
-                  : 'bg-gray-400'
-                }`}>
-                  {profile.vipLevel === '免费版' ? '免费' : 'VIP'}
                 </div>
               </div>
 
@@ -128,19 +144,6 @@ export default function ProfilePage() {
 
               <div className="flex-1">
                 <h2 className="font-semibold text-lg">{profile.nickname || '未设置昵称'}</h2>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${
-                    profile.vipLevel === '年费VIP' ? 'bg-yellow-100 text-yellow-700'
-                    : profile.vipLevel === 'VIP' ? 'bg-blue-100 text-blue-700'
-                    : profile.vipLevel === '体验VIP' ? 'bg-green-100 text-green-700'
-                    : 'bg-gray-100 text-gray-500'
-                  }`}>{profile.vipLevel}</span>
-                  {profile.vipExpiresAt && (
-                    <span className="text-xs text-gray-400">
-                      有效期至 {new Date(profile.vipExpiresAt).toLocaleDateString('zh-CN')}
-                    </span>
-                  )}
-                </div>
                 {profile.displayId && (
                   <div className="flex items-center gap-1 mt-1">
                     <span className="text-xs text-gray-400 font-mono">{profile.displayId}</span>
@@ -176,6 +179,64 @@ export default function ProfilePage() {
           {updateProfile.isSuccess && <span className="text-sm text-green-600 ml-3">已保存</span>}
           {updateProfile.isError && <span className="text-sm text-red-600 ml-3">保存失败</span>}
         </form>
+
+        {/* 修改密码 */}
+        <div className="bg-white rounded-xl border border-gray-200 p-6 mt-6">
+          <h2 className="font-semibold mb-4">账号绑定</h2>
+          <div className="space-y-4">
+            {/* 邮箱绑定 */}
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-sm font-medium text-gray-700">邮箱</span>
+                <span className="text-sm text-gray-500 ml-2">
+                  {profile?.email || '未绑定'}
+                </span>
+              </div>
+              <button onClick={() => { setShowBindEmail(!showBindEmail); setEmailInput(profile?.email || ''); }}
+                className="text-sm text-blue-500 hover:text-blue-700">
+                {profile?.email ? '更换' : '绑定'}
+              </button>
+            </div>
+            {showBindEmail && (
+              <div className="flex gap-2">
+                <input type="email" value={emailInput} onChange={e => setEmailInput(e.target.value)}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                  placeholder="输入邮箱地址" />
+                <button onClick={() => { if (emailInput.trim()) bindEmail.mutate({ email: emailInput.trim() }); }}
+                  disabled={bindEmail.isPending}
+                  className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50">
+                  {bindEmail.isPending ? '绑定中...' : '确认'}
+                </button>
+              </div>
+            )}
+
+            {/* 手机号绑定 */}
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-sm font-medium text-gray-700">手机号</span>
+                <span className="text-sm text-gray-500 ml-2">
+                  {profile?.phone || '未绑定'}
+                </span>
+              </div>
+              <button onClick={() => { setShowBindPhone(!showBindPhone); setPhoneInput(profile?.phone || ''); }}
+                className="text-sm text-blue-500 hover:text-blue-700">
+                {profile?.phone ? '更换' : '绑定'}
+              </button>
+            </div>
+            {showBindPhone && (
+              <div className="flex gap-2">
+                <input type="tel" value={phoneInput} onChange={e => setPhoneInput(e.target.value)}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-900"
+                  placeholder="输入手机号" />
+                <button onClick={() => { if (phoneInput.trim()) bindPhone.mutate({ phone: phoneInput.trim() }); }}
+                  disabled={bindPhone.isPending}
+                  className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50">
+                  {bindPhone.isPending ? '绑定中...' : '确认'}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
 
         {/* 修改密码 */}
         <div className="bg-white rounded-xl border border-gray-200 p-6 mt-6">

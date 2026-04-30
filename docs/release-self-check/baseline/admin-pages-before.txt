@@ -1,0 +1,18 @@
+total 16
+drwxr-xr-x 1 Administrator 197121    0  4月 30 12:21 .
+drwxr-xr-x 1 Administrator 197121    0  4月 29 03:29 ..
+drwxr-xr-x 1 Administrator 197121    0  4月 25 17:24 billing
+drwxr-xr-x 1 Administrator 197121    0  4月 29 23:23 channels
+drwxr-xr-x 1 Administrator 197121    0  4月 12 19:33 disclaimer
+-rw-r--r-- 1 Administrator 197121  809  4月 15 13:54 error.tsx
+drwxr-xr-x 1 Administrator 197121    0  4月 24 22:41 feedback
+-rw-r--r-- 1 Administrator 197121 3471  4月 30 12:21 layout.tsx
+drwxr-xr-x 1 Administrator 197121    0  4月 30 12:17 logs
+drwxr-xr-x 1 Administrator 197121    0  4月 26 17:22 migration
+drwxr-xr-x 1 Administrator 197121    0  4月 29 23:04 permissions
+drwxr-xr-x 1 Administrator 197121    0  4月 30 12:13 presets
+drwxr-xr-x 1 Administrator 197121    0  4月 30 13:17 pricing
+drwxr-xr-x 1 Administrator 197121    0  4月 29 23:05 revenue
+drwxr-xr-x 1 Administrator 197121    0  4月 15 22:38 review
+drwxr-xr-x 1 Administrator 197121    0  4月 25 17:24 templates
+drwxr-xr-x 1 Administrator 197121    0  4月 30 12:16 users

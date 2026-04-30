@@ -6,12 +6,12 @@ import { AnthropicCompatAdapter } from './anthropic-compat';
 // 各 provider 的默认配置
 const PROVIDER_DEFAULTS: Record<string, { baseUrl: string; model: string }> = {
   longcat: {
-    baseUrl: 'https://api.longcat.chat/anthropic',
+    baseUrl: 'https://api.longcat.chat/openai/v1',
     model: 'LongCat-Flash-Thinking-2601',
   },
   deepseek: {
     baseUrl: 'https://api.deepseek.com/v1',
-    model: 'deepseek-chat',
+    model: 'deepseek-v4-pro',
   },
   qwen: {
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
@@ -48,4 +48,9 @@ export function createAdapter(provider: string, config: AdapterConfig): AIAdapte
 
 export function getSupportedProviders() {
   return Object.keys(PROVIDER_DEFAULTS);
+}
+
+/** 获取指定 provider 的默认模型名（用于渠道降级时自动切换模型） */
+export function getProviderDefaultModel(provider: string): string | undefined {
+  return PROVIDER_DEFAULTS[provider]?.model;
 }

@@ -28,8 +28,6 @@ const SIDEBAR_ITEMS: SidebarItem[] = [
     href: '/chapters', label: '正文创作', icon: '▤',
     isNext: (p) => p.hasChapters && !p.chapterDraft && !p.chapterFinal,
   },
-  { href: '/templates', label: '模板', icon: '▦' },
-  { href: '/agents', label: 'AI 助手', icon: '✦' },
 ];
 
 interface ProjectSidebarProps {
@@ -39,16 +37,9 @@ interface ProjectSidebarProps {
   projectStyle?: string | null;
   currentPath: string;
   progress: WorkflowProgress;
-}
-
-function getChapterHref(projectId: string, progress: WorkflowProgress): string {
-  // 如果已有章节正文 → 指向最近的章节工作台
-  if (progress.chapterDraft > 0 || progress.chapterFinal > 0) {
-    // 用 progress 判断是否有正文，具体 ID 需通过附加查询
-    // 此处返回通用路径，组件内会动态解析
-  }
-  // 有章节但无正文 → 指向大纲页提示用户先创建大纲
-  return `/project/${projectId}/chapters`;
+  onExport?: () => void;
+  exportDisabled?: boolean;
+  exportDisabledTitle?: string;
 }
 
 export function ProjectSidebar({
@@ -58,37 +49,20 @@ export function ProjectSidebar({
   projectStyle,
   currentPath,
   progress,
+  onExport,
+  exportDisabled,
+  exportDisabledTitle,
 }: ProjectSidebarProps) {
-  // 查询最近章节用于正文创作跳转
-  const { data: stats } = trpc.project.getProjectStats.useQuery(
-    { projectId },
-    { enabled: progress.hasChapters },
+  // 分析任务状态查询
+  const { data: pendingAnalyses } = trpc.analysis.listByProject.useQuery(
+    { projectId, limit: 10 },
+    { refetchInterval: 30000 },
   );
-  const { data: outlineTree } = trpc.project.getOutlineTree.useQuery(
-    { projectId },
-    { enabled: progress.hasChapters && !stats?.recentChapter },
-  );
-
-  // 计算正文创作链接：recentChapter → 第一个章节 → 大纲页兜底
-  const chapterHref = (() => {
-    if (stats?.recentChapter) {
-      return `/project/${projectId}/chapter/${stats.recentChapter.id}`;
-    }
-    // 从 outlineTree 找第一个章节
-    if (outlineTree && outlineTree.length > 0) {
-      const firstVol = outlineTree[0];
-      if (firstVol?.units && firstVol.units.length > 0) {
-        const firstUnit = firstVol.units[0];
-        if (firstUnit?.chapters && firstUnit.chapters.length > 0) {
-          return `/project/${projectId}/chapter/${firstUnit.chapters[0].id}`;
-        }
-      }
-    }
-    return `/project/${projectId}/outline`;
-  })();
+  const activeAnalyses = pendingAnalyses?.filter(a => a.status === 'processing') || [];
+  const completedUnreadAnalyses = pendingAnalyses?.filter(a => a.status === 'completed' && !a.dismissed) || [];
 
   return (
-    <aside className="w-56 bg-white border-r border-gray-200 p-4 flex flex-col shrink-0">
+    <aside className="w-56 bg-white border-r border-gray-200 p-4 flex flex-col shrink-0 sticky top-0 h-screen overflow-y-auto">
       <div className="mb-6">
         <Link href="/dashboard" className="text-xs text-gray-400 hover:text-gray-600 transition">&larr; 项目列表</Link>
         <h2 className="font-bold mt-2 truncate">{projectName}</h2>
@@ -97,14 +71,10 @@ export function ProjectSidebar({
         </p>
       </div>
       <nav className="space-y-1 flex-1">
-        {SIDEBAR_ITEMS.map(item => {
+        {SIDEBAR_ITEMS.map((item) => {
           const active = currentPath === item.href;
-          const complete = item.isComplete?.(progress);
           const isNext = item.isNext?.(progress);
-          // 正文创作链接动态指向工作台
-          const href = item.label === '正文创作'
-            ? chapterHref
-            : `/project/${projectId}${item.href}`;
+          const href = `/project/${projectId}${item.href}`;
 
           return (
             <Link
@@ -118,10 +88,7 @@ export function ProjectSidebar({
             >
               <span className={active ? 'text-white' : 'text-gray-400'}>{item.icon}</span>
               <span className="flex-1">{item.label}</span>
-              {complete && (
-                <span className="text-green-500 text-xs font-bold" title="已完成">✓</span>
-              )}
-              {isNext && !complete && (
+              {isNext && (
                 <span className="text-amber-500 text-[10px] font-medium animate-pulse" title="下一步">
                   →
                 </span>
@@ -130,6 +97,51 @@ export function ProjectSidebar({
           );
         })}
       </nav>
+
+      {/* 导出作品按钮 */}
+      <div className="mt-auto pt-3 border-t border-gray-200">
+        {onExport ? (
+          <button
+            onClick={() => !exportDisabled && onExport()}
+            disabled={exportDisabled}
+            title={exportDisabled ? (exportDisabledTitle || '不可导出') : '导出作品'}
+            className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition ${
+              exportDisabled
+                ? 'text-gray-300 cursor-not-allowed'
+                : 'text-gray-700 hover:bg-gray-100'
+            }`}
+          >
+            <span className="text-gray-400">↓</span>
+            <span>导出作品</span>
+          </button>
+        ) : (
+          <Link
+            href={`/project/${projectId}/outline?export=1`}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition"
+          >
+            <span className="text-gray-400">↓</span>
+            <span>导出作品</span>
+          </Link>
+        )}
+      </div>
+
+      {/* 分析任务状态指示器 */}
+      {(activeAnalyses.length > 0 || completedUnreadAnalyses.length > 0) && (
+        <div className="border-t border-gray-200 pt-3 mt-2 space-y-1">
+          {activeAnalyses.length > 0 && (
+            <div className="flex items-center gap-2 px-3 py-2 text-xs text-amber-700 bg-amber-50 rounded-lg">
+              <span className="w-2 h-2 bg-amber-400 rounded-full animate-pulse shrink-0" />
+              <span>AI 分析进行中 ({activeAnalyses.length})</span>
+            </div>
+          )}
+          {completedUnreadAnalyses.length > 0 && (
+            <div className="flex items-center gap-2 px-3 py-2 text-xs text-green-700 bg-green-50 rounded-lg">
+              <span className="font-bold text-green-600 shrink-0">&#10003;</span>
+              <span>有新的分析报告 ({completedUnreadAnalyses.length})</span>
+            </div>
+          )}
+        </div>
+      )}
     </aside>
   );
 }

@@ -7,11 +7,25 @@ import { PurchaseImportDialog } from '@/components/template/purchase-import-dial
 
 type SourceFilter = 'all' | 'official' | 'user';
 type SortBy = 'hot' | 'rating' | 'price' | 'newest';
-type TabKey = 'all' | 'likes' | 'purchases';
+type TabKey = 'all' | 'views' | 'purchases';
+type AiRoleFilter = 'all' | 'editor' | 'setting_editor' | 'writer';
+
+const AI_ROLE_LABELS: Record<string, string> = {
+  editor: '文学编辑',
+  setting_editor: '设定编辑',
+  writer: '正文作者',
+};
+
+const AI_ROLE_COLORS_MAP: Record<string, string> = {
+  editor: 'bg-blue-100 text-blue-700',
+  setting_editor: 'bg-purple-100 text-purple-700',
+  writer: 'bg-green-100 text-green-700',
+};
 
 export default function MarketplacePage() {
   const [activeTab, setActiveTab] = useState<TabKey>('all');
   const [category, setCategory] = useState('');
+  const [aiRoleFilter, setAiRoleFilter] = useState<AiRoleFilter>('all');
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
   const [sortBy, setSortBy] = useState<SortBy>('newest');
   const [search, setSearch] = useState('');
@@ -33,9 +47,9 @@ export default function MarketplacePage() {
     sortBy,
   }, { enabled: useSearch && search.length > 0 && activeTab === 'all' });
 
-  // 已点赞
+  // 已查看
   const { data: likedTemplates = [], isLoading: likesLoading } = trpc.template.myLikes.useQuery(undefined, {
-    enabled: activeTab === 'likes',
+    enabled: activeTab === 'views',
   });
 
   // 已购买
@@ -45,13 +59,18 @@ export default function MarketplacePage() {
 
   const displayItems = activeTab === 'all'
     ? (useSearch && search.length > 0 ? searchResults : templates)
-    : activeTab === 'likes'
+    : activeTab === 'views'
       ? likedTemplates.map(l => ({ ...l.template, ratedAt: l.ratedAt }))
       : purchasedTemplates.map(p => ({ ...p.template, purchasePrice: p.purchasePrice, purchasedAt: p.purchasedAt }));
 
+  // AI 角色过滤（客户端过滤）
+  const roleFilteredItems = aiRoleFilter === 'all'
+    ? displayItems
+    : displayItems.filter(item => (item as any).aiTargetRole === aiRoleFilter);
+
   const loading = activeTab === 'all'
     ? (useSearch ? searchLoading : isLoading)
-    : activeTab === 'likes'
+    : activeTab === 'views'
       ? likesLoading
       : purchasesLoading;
 
@@ -95,7 +114,7 @@ export default function MarketplacePage() {
 
         {/* Tab 切换 */}
         <div className="flex gap-2 mb-4">
-          {([['all', '全部模板'], ['likes', '已点赞'], ['purchases', '已购买']] as const).map(([key, label]) => (
+          {([['all', '全部模板'], ['views', '已查看'], ['purchases', '已购买']] as const).map(([key, label]) => (
             <button key={key}
               onClick={() => handleTabChange(key)}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
@@ -161,13 +180,24 @@ export default function MarketplacePage() {
                   }`}>{c.label}</button>
               ))}
             </div>
+
+            {/* AI 角色筛选 */}
+            <div className="flex gap-2 mb-6 flex-wrap items-center">
+              <span className="text-xs text-gray-400 mr-1">AI 角色：</span>
+              {([['all', '全部'], ['editor', '文学编辑'], ['setting_editor', '设定编辑'], ['writer', '正文作者']] as const).map(([key, label]) => (
+                <button key={key} onClick={() => setAiRoleFilter(key as AiRoleFilter)}
+                  className={`px-4 py-1.5 rounded-full text-sm border transition ${
+                    aiRoleFilter === key ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-300 hover:border-gray-500'
+                  }`}>{label}</button>
+              ))}
+            </div>
           </>
         )}
 
         {/* 模板列表 */}
         {loading ? (
           <div className="text-center py-16 text-gray-400">加载中...</div>
-        ) : displayItems.length === 0 ? (
+        ) : roleFilteredItems.length === 0 ? (
           <div className="text-center py-16 text-gray-400">
             {activeTab === 'all' ? (
               <>
@@ -176,9 +206,9 @@ export default function MarketplacePage() {
                   <p className="text-sm mt-2">还没有用户上传的模板</p>
                 )}
               </>
-            ) : activeTab === 'likes' ? (
+            ) : activeTab === 'views' ? (
               <>
-                <p>还没有点赞的模板</p>
+                <p>还没有查看的模板</p>
                 <p className="text-sm mt-2">去 <button onClick={() => handleTabChange('all')} className="text-gray-600 hover:text-gray-900 underline">全部模板</button> 逛逛吧</p>
               </>
             ) : (
@@ -190,7 +220,7 @@ export default function MarketplacePage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {displayItems.map(item => (
+            {roleFilteredItems.map(item => (
               <TemplateCard
                 key={item.id}
                 item={item}
@@ -220,6 +250,7 @@ function TemplateCard({ item, showImport, onImport }: {
     id: string; title: string; description?: string | null; source: string;
     category?: string | null; price: number | null; viewCount: number | null; importCount: number | null;
     avgRating?: number; ratingCount?: number;
+    aiTargetRole?: string | null;
     uploader?: { id: string; nickname: string | null; displayId: string | null; avatarUrl: string | null; vipLevel?: string } | null;
     purchasePrice?: number | null; purchasedAt?: Date | string | null;
     ratedAt?: Date | string | null;
@@ -237,11 +268,11 @@ function TemplateCard({ item, showImport, onImport }: {
   const importMutation = trpc.template.importTemplate.useMutation();
 
   const handleLike = async () => {
-    if (!confirm('点赞将消耗 1 精灵豆，确认继续？')) return;
+    if (!confirm('查看全文将消耗 1 精灵豆，确认继续？')) return;
     try {
       await likeMutation.mutateAsync({ templateId: item.id });
     } catch (e: any) {
-      alert(e.message || '点赞失败');
+      alert(e.message || '查看失败');
     }
   };
 
@@ -264,13 +295,22 @@ function TemplateCard({ item, showImport, onImport }: {
           <span className={`text-xs px-2 py-0.5 rounded-full ${
             item.source === 'official' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
           }`}>{item.source === 'official' ? '官方' : '用户上传'}</span>
+          {item.aiTargetRole && AI_ROLE_LABELS[item.aiTargetRole] && (
+            <span className={`text-xs px-2 py-0.5 rounded-full ${AI_ROLE_COLORS_MAP[item.aiTargetRole]}`}>
+              {AI_ROLE_LABELS[item.aiTargetRole]}
+            </span>
+          )}
         </div>
         <span className={`text-xs px-2 py-0.5 rounded-full ${(item.price ?? 0) === 0 ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-          {item.source === 'official' ? '免费' : '1豆预览 · 10豆导入'}
+          {item.source === 'official' ? '免费' : '1豆查看 · 10豆导入'}
         </span>
       </div>
       <h3 className="font-semibold">{item.title}</h3>
-      <p className="text-sm text-gray-500 mt-1 line-clamp-2">{item.description}</p>
+      <p className="text-sm text-gray-500 mt-1 line-clamp-2">
+        {item.description && item.description.length > 200
+          ? item.description.slice(0, 200) + '...'
+          : item.description}
+      </p>
       <div className="flex items-center gap-4 mt-3 text-xs text-gray-400">
         <span>{item.viewCount} 浏览</span>
         <span>{item.importCount} 导入</span>
@@ -282,13 +322,6 @@ function TemplateCard({ item, showImport, onImport }: {
         <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-gray-100">
           <span className="text-xs">{item.uploader.avatarUrl || '👤'}</span>
           <span className="text-xs text-gray-500">{item.uploader.nickname || '未知'}</span>
-          {item.uploader.vipLevel && item.uploader.vipLevel !== '免费版' && (
-            <span className={`text-xs px-1 py-0.5 rounded-full ${
-              item.uploader.vipLevel === '年费VIP' ? 'bg-yellow-100 text-yellow-700'
-              : item.uploader.vipLevel === 'VIP' ? 'bg-blue-100 text-blue-700'
-              : 'bg-green-100 text-green-700'
-            }`}>{item.uploader.vipLevel}</span>
-          )}
           {item.uploader.displayId && (
             <span className="text-xs text-gray-300">{item.uploader.displayId}</span>
           )}

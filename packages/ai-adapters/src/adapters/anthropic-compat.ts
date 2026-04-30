@@ -15,6 +15,11 @@ interface AnthropicStreamEvent {
   index?: number;
 }
 
+interface AnthropicErrorResponse {
+  error?: { message?: string };
+  message?: string;
+}
+
 export class AnthropicCompatAdapter implements AIAdapter {
   readonly provider: string;
   private apiKey: string;
@@ -29,11 +34,20 @@ export class AnthropicCompatAdapter implements AIAdapter {
   }
 
   private getHeaders(): Record<string, string> {
-    return {
+    const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'x-api-key': this.apiKey,
       'anthropic-version': '2023-06-01',
     };
+
+    // LongCat 使用 Authorization: Bearer 认证
+    // Qwen 等其他 Anthropic 兼容端点使用 x-api-key 认证
+    if (this.provider === 'longcat') {
+      headers['Authorization'] = `Bearer ${this.apiKey}`;
+    } else {
+      headers['x-api-key'] = this.apiKey;
+    }
+
+    return headers;
   }
 
   /** 将 AIMessage[] 转换为 Anthropic messages 格式 */
@@ -79,7 +93,7 @@ export class AnthropicCompatAdapter implements AIAdapter {
       if (!res.ok) {
         let errorMsg = '';
         try {
-          const json = await res.json();
+          const json = await res.json() as AnthropicErrorResponse;
           errorMsg = json?.error?.message || json?.message || JSON.stringify(json);
         } catch {
           const text = await res.text().catch(() => '');
@@ -149,7 +163,7 @@ export class AnthropicCompatAdapter implements AIAdapter {
           // 尝试读取错误响应以提供诊断
           let errorDetail = '';
           try {
-            const errBody = await res.json();
+            const errBody = await res.json() as AnthropicErrorResponse;
             errorDetail = errBody?.error?.message || errBody?.message || '';
           } catch {
             errorDetail = (await res.text().catch(() => '')).slice(0, 200);
@@ -172,61 +186,111 @@ export class AnthropicCompatAdapter implements AIAdapter {
       const reader = res.body?.getReader();
       if (!reader) throw new Error('No response body');
 
+      // Check if the response is actually JSON (not SSE) — some providers ignore stream:true
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        try {
+          const data = await res.json() as AnthropicResponse;
+          const content = data.content?.filter(b => b.text).map(b => b.text!).join('') || '';
+          const usage: TokenUsage | undefined = data.usage ? {
+            promptTokens: data.usage.input_tokens,
+            completionTokens: data.usage.output_tokens,
+            totalTokens: data.usage.input_tokens + data.usage.output_tokens,
+          } : undefined;
+          if (content) {
+            for (const char of content) {
+              yield { content: char, done: false };
+            }
+          }
+          yield { content: '', done: true, usage };
+          return;
+        } catch (e) {
+          throw new Error(`[${this.provider}] Expected SSE but got JSON response`);
+        }
+      }
+
       const decoder = new TextDecoder();
       let buffer = '';
+      let lastEventType = ''; // Track last SSE event type for cases where data: line doesn't have type
+      let receivedAnyEvent = false;
+      let hasTextContent = false; // Track if any text was output
+      let accumulatedThinking = ''; // Accumulate thinking for fallback
 
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
-          buffer += decoder.decode(value, { stream: true });
+          if (!receivedAnyEvent) {
+            receivedAnyEvent = true;
+            buffer += decoder.decode(value, { stream: false });
+          } else {
+            buffer += decoder.decode(value, { stream: true });
+          }
           const lines = buffer.split('\n');
           buffer = lines.pop() || '';
 
           for (const line of lines) {
             const trimmed = line.trim();
 
-            // 忽略 event: 行和 SSE comments
-            if (trimmed.startsWith('event:') || trimmed.startsWith(':')) continue;
+            // Track event type from event: line
+            if (trimmed.startsWith('event:')) {
+              lastEventType = trimmed.slice(6).trim();
+              continue;
+            }
 
-            // 处理 data: 行
+            // Ignore SSE comments
+            if (trimmed.startsWith(':')) continue;
+
+            // Handle data: line
             if (!trimmed.startsWith('data: ')) continue;
             const payload = trimmed.slice(6);
             if (payload === '[DONE]') {
-              yield { content: '', done: true };
-              return;
+              break;
             }
             try {
               const data = JSON.parse(payload) as AnthropicStreamEvent;
 
+              // If JSON doesn't have type, use the last event: line type
+              if (!data.type && lastEventType) {
+                data.type = lastEventType;
+              }
+
               if (data.type === 'message_stop') {
+                // If no text was output but we have thinking, use thinking as response
+                if (!hasTextContent && accumulatedThinking) {
+                  yield { content: accumulatedThinking, done: false };
+                }
                 yield { content: '', done: true };
                 return;
               }
 
               // content_block_delta — 增量内容
               if (data.type === 'content_block_delta' && data.delta) {
-                // text_delta — 显示回答内容
-                if (data.delta.type === 'text_delta' && data.delta.text) {
+                // text_delta / text — 显示回答内容
+                if ((data.delta.type === 'text_delta' || data.delta.type === 'text') && data.delta.text) {
+                  hasTextContent = true;
                   yield { content: data.delta.text, done: false };
                   continue;
                 }
-                // thinking_delta — 显示思考过程
-                if (data.delta.type === 'thinking_delta' && data.delta.thinking) {
+                // thinking_delta / thinking — 显示思考过程
+                if ((data.delta.type === 'thinking_delta' || data.delta.type === 'thinking') && data.delta.thinking) {
+                  accumulatedThinking += data.delta.thinking;
                   yield { thinking: data.delta.thinking, content: '', done: false };
                   continue;
                 }
               }
 
-              // content_block_start — 初始内容块（LongCat/Qwen 等 Anthropic 兼容 API 会发送）
+              // content_block_start — 初始内容块
               if (data.type === 'content_block_start' && data.content_block) {
                 const block = data.content_block;
                 if (block.type === 'text' && block.text) {
+                  hasTextContent = true;
                   yield { content: block.text, done: false };
                   continue;
                 }
                 if (block.type === 'thinking' && block.thinking) {
+                  accumulatedThinking += block.thinking;
                   yield { thinking: block.thinking, content: '', done: false };
                   continue;
                 }
@@ -234,6 +298,10 @@ export class AnthropicCompatAdapter implements AIAdapter {
 
               // message_delta — 结束时的 usage 信息
               if (data.type === 'message_delta' && data.usage) {
+                // If no text was output but we have thinking, use thinking as response
+                if (!hasTextContent && accumulatedThinking) {
+                  yield { content: accumulatedThinking, done: false };
+                }
                 yield {
                   content: '',
                   done: true,
@@ -252,9 +320,12 @@ export class AnthropicCompatAdapter implements AIAdapter {
         }
       } finally {
         reader.releaseLock();
+        // If stream ended without explicit done and we only have thinking
+        if (!hasTextContent && accumulatedThinking) {
+          yield { content: accumulatedThinking, done: false };
+        }
+        yield { content: '', done: true };
       }
-
-      yield { content: '', done: true };
     } catch (err) {
       clearTimeout(timeoutId);
       if (err instanceof Error && err.name === 'AbortError') {

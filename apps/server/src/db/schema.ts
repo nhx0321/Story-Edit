@@ -43,6 +43,7 @@ export const users = pgTable('users', {
   inviteCode: varchar('invite_code', { length: 20 }).unique(),
   referredByCode: varchar('referred_by_code', { length: 20 }),
   displayId: varchar('display_id', { length: 12 }).unique(),
+  userRole: varchar('user_role', { length: 20 }).default('free'),
   isAdmin: boolean('is_admin').default(false).notNull(),
   adminLevel: integer('admin_level'),
   bannedFromPublish: boolean('banned_from_publish').default(false),
@@ -105,7 +106,7 @@ export const projects = pgTable('projects', {
   name: varchar('name', { length: 200 }).notNull(),
   type: projectTypeEnum('type').notNull().default('novel'),
   genre: varchar('genre', { length: 100 }),
-  genreTag: genreEnum('genre_tag'),
+  genreTag: varchar('genre_tag', { length: 100 }),
   style: varchar('style', { length: 100 }),
   methodology: varchar('methodology', { length: 100 }),
   config: jsonb('config').$type<Record<string, unknown>>(),
@@ -460,6 +461,14 @@ export const templateLikes = pgTable('template_likes', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
+export const contentFingerprints = pgTable('content_fingerprints', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  templateId: uuid('template_id').notNull().references(() => templates.id).unique(),
+  fingerprintHash: varchar('fingerprint_hash', { length: 64 }).notNull(),
+  fingerprintDec: bigint('fingerprint_dec', { mode: 'bigint' }).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
 // ========== 免责声明 ==========
 
 export const disclaimers = pgTable('disclaimers', {
@@ -572,6 +581,10 @@ export const templateCommentsRelations = relations(templateComments, ({ one }) =
   template: one(templates, { fields: [templateComments.templateId], references: [templates.id] }),
   user: one(users, { fields: [templateComments.userId], references: [users.id] }),
   parent: one(templateComments, { fields: [templateComments.parentCommentId], references: [templateComments.id] }),
+}));
+
+export const contentFingerprintsRelations = relations(contentFingerprints, ({ one }) => ({
+  template: one(templates, { fields: [contentFingerprints.templateId], references: [templates.id] }),
 }));
 
 // ========== 美术资产管理 ==========
@@ -929,6 +942,7 @@ export const genrePresets = pgTable('genre_presets', {
   id: uuid('id').primaryKey().defaultRandom(),
   genre: genreEnum('genre').notNull(),
   agentRole: varchar('agent_role', { length: 50 }).notNull(),
+  projectType: varchar('project_type', { length: 20 }).default('webnovel'),
   systemPrompt: text('system_prompt').notNull(),
   description: text('description'),
   category: varchar('category', { length: 50 }),
@@ -997,3 +1011,40 @@ export const notificationsRelations = relations(notifications, ({ one }) => ({
   user: one(users, { fields: [notifications.userId], references: [users.id] }),
   feedback: one(feedbacks, { fields: [notifications.feedbackId], references: [feedbacks.id] }),
 }));
+
+// ========== 章节分析（AI分析持久化） ==========
+
+export const chapterAnalysis = pgTable('chapter_analysis', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  chapterId: uuid('chapter_id').notNull().references(() => chapters.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  type: varchar('type', { length: 50 }).notNull(),
+  status: varchar('status', { length: 20 }).notNull().default('pending'),
+  jobId: varchar('job_id', { length: 255 }),
+  result: text('result'),
+  progress: integer('progress').default(0),
+  errorMessage: text('error_message'),
+  dismissed: boolean('dismissed').notNull().default(false),
+  metadata: jsonb('metadata').default({}),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+// 系统全局设置（key-value）
+export const systemSettings = pgTable('system_settings', {
+  key: varchar('key', { length: 100 }).primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+// 用户组配置（动态管理每日限额和模型访问权限）
+export const userGroups = pgTable('user_groups', {
+  name: varchar('name', { length: 50 }).primaryKey(),
+  displayName: varchar('display_name', { length: 100 }).notNull(),
+  dailyTokenLimit: bigint('daily_token_limit', { mode: 'number' }).default(100000),
+  allowedModelGroups: jsonb('allowed_model_groups').default(['default']),
+  description: text('description'),
+  sortOrder: integer('sort_order').default(0),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});

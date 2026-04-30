@@ -1,9 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { trpc } from '@/lib/trpc';
-import { streamAiChat } from '@/lib/ai-stream';
 import { StoryEditor } from '@/components/editor/story-editor';
 import { VersionPanel } from '@/components/version/version-panel';
 import { ChatPanel } from '@/components/chat/chat-panel';
@@ -16,8 +15,68 @@ import { OutlineSidebar } from '@/components/chapter/outline-sidebar';
 import { useWorkflowProgress } from '@/lib/use-workflow-progress';
 import { ProjectSidebar } from '@/components/layout/project-sidebar';
 import { formatChapterContent } from '@/lib/format-content';
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from 'docx';
+import { saveAs } from 'file-saver';
 
 type TabKey = 'brief' | 'draft' | 'checklist' | 'modify' | 'finalize';
+
+function exportChapterDocx(params: {
+  projectTitle?: string;
+  volumeTitle?: string;
+  unitTitle?: string;
+  chapterTitle?: string;
+  content: string;
+  isFinal: boolean;
+}) {
+  const plainText = params.content
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>\s*<p[^>]*>/gi, '\n\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .trim();
+
+  const children: Paragraph[] = [
+    new Paragraph({
+      text: params.chapterTitle || '章节正文',
+      heading: HeadingLevel.TITLE,
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 320 },
+    }),
+    new Paragraph({
+      children: [new TextRun(`项目：${params.projectTitle || '未命名项目'}`)],
+      spacing: { after: 80 },
+    }),
+    new Paragraph({
+      children: [new TextRun(`位置：${params.volumeTitle || '未分卷'} / ${params.unitTitle || '未分单元'}`)],
+      spacing: { after: 80 },
+    }),
+    new Paragraph({
+      children: [new TextRun(`状态：${params.isFinal ? '已定稿' : '草稿'}`)],
+      spacing: { after: 200 },
+    }),
+  ];
+
+  const paragraphs = plainText.split(/\n\n+/).filter(p => p.trim());
+  if (paragraphs.length === 0) {
+    children.push(new Paragraph({ children: [new TextRun('当前没有可导出的正文内容。')] }));
+  } else {
+    for (const para of paragraphs) {
+      children.push(new Paragraph({ children: [new TextRun(para.trim())], spacing: { after: 120 } }));
+    }
+  }
+
+  const doc = new Document({
+    sections: [{ properties: {}, children }],
+  });
+
+  return Packer.toBlob(doc).then(blob => {
+    saveAs(blob, `${params.chapterTitle || '章节正文'}_${params.isFinal ? '定稿' : '草稿'}.docx`);
+  });
+}
 
 interface ChapterWorkspaceProps {
   projectId: string;
@@ -45,10 +104,16 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
   const [editorContent, setEditorContent] = useState('');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
 
-  // Self-check state
+  // Self-check / Analysis state
   const [selfCheckReport, setSelfCheckReport] = useState<string | null>(null);
   const [selfCheckGenerating, setSelfCheckGenerating] = useState(false);
   const [selfCheckItems, setSelfCheckItems] = useState<CheckItem[]>([]);
+  const [currentAnalysisId, setCurrentAnalysisId] = useState<string | null>(null);
+  const [analysisProgress, setAnalysisProgress] = useState(0);
+  const [isThinkingModel, setIsThinkingModel] = useState(false);
+  const [showResumeDialog, setShowResumeDialog] = useState<string | null>(null);
+  const [showCompletedNotification, setShowCompletedNotification] = useState<string | null>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Modify state
   const [modifyHighlightTexts, setModifyHighlightTexts] = useState<string[]>([]);
@@ -80,6 +145,8 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
 
   // Save experience mutation (legacy)
   const saveExpMutation = trpc.workflow.saveChapterExperience.useMutation();
+  // Save modification result persistence
+  const saveModificationMutation = trpc.analysis.saveModificationResult.useMutation();
 
   // Set editable brief when data loads
   useEffect(() => {
@@ -102,6 +169,69 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
     window.addEventListener('workflow-step-completed', handler);
     return () => window.removeEventListener('workflow-step-completed', handler);
   }, [progress]);
+
+  // Clean up polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  }, []);
+
+  // Poll analysis status
+  const startPolling = useCallback((analysisId: string) => {
+    if (pollingRef.current) clearInterval(pollingRef.current);
+    pollingRef.current = setInterval(async () => {
+      try {
+        const status = await utils.client.analysis.getStatus.query({ analysisId });
+        if (status.status === 'completed') {
+          if (pollingRef.current) clearInterval(pollingRef.current);
+          pollingRef.current = null;
+          setSelfCheckReport(status.result);
+          if (status.result) {
+            const items = parseCheckItems(status.result);
+            setSelfCheckItems(items);
+          }
+          setSelfCheckGenerating(false);
+          setAnalysisProgress(100);
+          setShowResumeDialog(null);
+        } else if (status.status === 'failed') {
+          if (pollingRef.current) clearInterval(pollingRef.current);
+          pollingRef.current = null;
+          setSelfCheckReport(status.errorMessage || '分析失败');
+          setSelfCheckGenerating(false);
+          setShowResumeDialog(null);
+        } else if (status.status === 'processing') {
+          setAnalysisProgress(status.progress || 0);
+        }
+      } catch {
+        // Ignore polling errors, will retry on next interval
+      }
+    }, 2000);
+  }, [utils]);
+
+  // Recovery detection: check for pending/completed analyses on mount
+  useEffect(() => {
+    if (!chapterId) return;
+    utils.client.analysis.listByChapter.query({ chapterId }).then(results => {
+      // 检查 modification 类型 — R4b: 恢复AI修改结果
+      const modificationRecords = results.filter(r => r.type === 'modification' && r.status === 'completed' && r.result);
+      if (modificationRecords.length > 0 && !modifiedContent) {
+        const latest = modificationRecords[0];
+        setModifiedContent(latest.result || '');
+        setShowCompletedNotification(latest.id);
+      }
+
+      const pending = results.filter(r => r.status === 'processing');
+      const completed = results.filter(r => r.status === 'completed' && !r.dismissed && r.type !== 'modification');
+      if (pending.length > 0) {
+        setShowResumeDialog(pending[0].id);
+        startPolling(pending[0].id);
+      }
+      if (completed.length > 0) {
+        setShowCompletedNotification(completed[0].id);
+      }
+    }).catch(() => {});
+  }, [chapterId, utils, modifiedContent, startPolling]);
 
   const chapter = chapterDetail?.chapter;
   const unit = chapterDetail?.unit;
@@ -143,6 +273,18 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
     setEditorContent(content);
     setVersionPanelOpen(false);
   }, []);
+
+  const handleExportCurrentChapter = useCallback(async () => {
+    const content = editorContent.trim() || chapterDetail?.latestVersion?.content || '';
+    await exportChapterDocx({
+      projectTitle: projectData?.name,
+      volumeTitle: volume?.title,
+      unitTitle: unit?.title,
+      chapterTitle: chapter?.title,
+      content,
+      isFinal: !!currentVersion?.isFinal,
+    });
+  }, [editorContent, chapterDetail?.latestVersion?.content, projectData?.name, volume?.title, unit?.title, chapter?.title, currentVersion?.isFinal]);
 
   // Self-check: parse report into structured items
   const parseCheckItems = (report: string): CheckItem[] => {
@@ -236,10 +378,6 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
   };
 
   const handleSelfCheck = async () => {
-    if (!configs || configs.length === 0) {
-      setSelfCheckReport('请先配置 AI 模型');
-      return;
-    }
     const latestContent = chapterDetail?.latestVersion?.content || editorContent;
     if (!latestContent) {
       setSelfCheckReport('暂无正文内容，无法自检');
@@ -249,64 +387,41 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
     setSelfCheckReport('');
     setSelfCheckItems([]);
     try {
-      const systemMsg = { role: 'system' as const, content: '你是一名专业的文学编辑。请对小说正文进行全面的自检，找出需要修改的问题。输出格式清晰的自检报告，每项包含：原因、原文、修改建议。注意：报告中不要包含任何签名或署名（如"审核员签名"等），直接输出修改建议内容。' };
-      const checkPrompt = taskBriefData?.checkPrompt || `请对以下正文进行自检：\n\n${latestContent.slice(0, 8000)}`;
-      const userMsg = { role: 'user' as const, content: checkPrompt };
-      let fullReport = '';
-      for await (const chunk of streamAiChat({
-        configId: configs[0].id,
-        messages: [systemMsg, userMsg],
+      const result = await utils.client.analysis.start.mutate({
         projectId,
-      })) {
-        if (chunk.error) {
-          setSelfCheckReport(`自检出错：${chunk.error}`);
-          break;
-        }
-        if (chunk.content) {
-          fullReport += chunk.content;
-          setSelfCheckReport(fullReport);
-        }
-      }
-      if (fullReport) {
-        const items = parseCheckItems(fullReport);
-        setSelfCheckItems(items);
-      }
-      if (!fullReport) {
-        setSelfCheckReport('自检完成，未发现问题');
-      }
-    } catch {
-      setSelfCheckReport('自检失败，请检查网络连接');
+        chapterId,
+        type: 'self_check',
+        editorContent: latestContent,
+      });
+      setCurrentAnalysisId(result.analysisId);
+      setIsThinkingModel(result.isThinking);
+      startPolling(result.analysisId);
+    } catch (err: unknown) {
+      setSelfCheckReport(err instanceof Error ? err.message : '发起分析失败');
+      setSelfCheckGenerating(false);
     }
-    setSelfCheckGenerating(false);
   };
 
 
   // Modify step: apply modified content with green breathing animation
-  const handleModificationsApplied = useCallback((modifiedPlainText: string, modifiedTexts: string[]) => {
-    // Convert plain text to HTML paragraphs
+  const handleModificationsApplied = useCallback((modifiedPlainText: string, _modifiedTexts: string[]) => {
+    // modifiedPlainText 中已包含 \uE000...\uE001 标记
+    // 先转 HTML，标记会保留（不会被 escapeHtml 影响）
     const html = formatChapterContent(modifiedPlainText);
 
-    // Wrap each modified text fragment in highlight span
-    let highlightedHtml = html;
-    for (const text of modifiedTexts) {
-      if (!text) continue;
-      try {
-        const escaped = text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        highlightedHtml = highlightedHtml.replace(
-          new RegExp(`(${escaped.replace(/\n/g, '\\n')})`, 'g'),
-          '<span class="mod-highlight">$1</span>'
-        );
-      } catch { /* skip if regex fails */ }
-    }
+    // 替换 Unicode 标记为高亮 span
+    const highlightedHtml = html
+      .replace(/\uE000/g, '<span class="mod-highlight">')
+      .replace(/\uE001/g, '</span>');
 
     // Set modified content (独立于草稿编辑器，不覆盖开始创作的内容)
     setModifiedContent(highlightedHtml);
-    setModifyHighlightTexts(modifiedTexts);
+    setModifyHighlightTexts([]);
 
     // Remove highlights after 5 seconds (提示修改位置)
     setTimeout(() => {
       setModifiedContent(prev => {
-        const cleaned = prev.replace(/<span class="mod-highlight">(.*?)<\/span>/g, '$1');
+        const cleaned = prev.replace(/<span class="mod-highlight">([\s\S]*?)<\/span>/g, '$1');
         return cleaned;
       });
       setModifyHighlightTexts([]);
@@ -394,6 +509,10 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
                 className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:border-gray-500 transition">
                 写作风格
               </button>
+              <button onClick={handleExportCurrentChapter}
+                className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:border-gray-500 transition">
+                导出正文
+              </button>
               <button onClick={() => setVersionPanelOpen(true)}
                 className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:border-gray-500 transition">
                 版本管理
@@ -405,6 +524,17 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
             </div>
           </div>
         </div>
+
+        {/* R9: 如果章节还未创建梗概，提示用户回到大纲编辑 */}
+        {chapter && !chapter.synopsis && (
+          <div className="bg-amber-50 border-b border-amber-200 px-6 py-3">
+            <p className="text-sm text-amber-800">
+              还未创建章节梗概，请回到
+              <Link href={`/project/${projectId}/outline`} className="text-amber-900 font-bold hover:underline mx-1">大纲编辑</Link>
+              与AI对话，从卷、单元、章节一步步深入创建梗概，我将根据章节梗概内容，自动为您撰写章节正文。
+            </p>
+          </div>
+        )}
 
         {/* Step Bar — 居中大按钮 */}
         <div className="border-b border-gray-200">
@@ -435,6 +565,19 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
           {/* Tab: 任务书 */}
           {activeTab === 'brief' && (
             <div className="max-w-4xl mx-auto px-6 py-6">
+              {/* 创作风格入口 */}
+              {!briefConfirmed && (
+                <div className="mb-4 bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl border border-amber-200 p-5">
+                  <p className="text-sm font-medium text-amber-800 mb-2">写作风格提示</p>
+                  <p className="text-xs text-amber-600 mb-1">在开始创作前，建议先设置写作风格，让AI生成的内容更符合您的预期</p>
+                  <p className="text-xs text-amber-600 mb-3">AI将根据您的要求或导入的模板、文件，进行三段试写，以便您确认心仪的方向</p>
+                  <button onClick={() => setWritingStyleOpen(true)}
+                    className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 transition">
+                    设置写作风格
+                  </button>
+                </div>
+              )}
+
               <div className="bg-white rounded-xl border border-gray-200 p-6">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="font-semibold">创作任务书</h2>
@@ -472,18 +615,6 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
                   </div>
                 )}
               </div>
-
-              {/* 创作风格入口 */}
-              {!briefConfirmed && (
-                <div className="mt-4 bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl border border-amber-200 p-5">
-                  <p className="text-sm font-medium text-amber-800 mb-2">写作风格提示</p>
-                  <p className="text-xs text-amber-600 mb-3">在开始创作前，建议先设置写作风格（节奏、视角、语气等），让 AI 生成的内容更符合你的预期。</p>
-                  <button onClick={() => setWritingStyleOpen(true)}
-                    className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 transition">
-                    设置写作风格
-                  </button>
-                </div>
-              )}
             </div>
           )}
 
@@ -546,9 +677,41 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
                     伏笔与逻辑、节奏与结构、文字质量等方面，生成详细的修改建议。
                   </p>
                   <button onClick={handleSelfCheck}
-                    disabled={!configs || configs.length === 0}
+                    disabled={selfCheckGenerating}
                     className="w-full py-2.5 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition disabled:opacity-50 disabled:cursor-not-allowed">
-                    开始自检
+                    {selfCheckGenerating
+                      ? (isThinkingModel ? 'AI将进行详细自检，thinking模型需要一些时间，请耐心等候。您可以根据质量要求选择合适模型。'
+                        : 'AI正在思考中，请稍候...')
+                      : '开始自检'}
+                  </button>
+                </div>
+              )}
+
+              {/* Resume dialog for recovered analysis */}
+              {showResumeDialog && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
+                    <span className="text-sm text-amber-800">检测到进行中的分析任务，正在恢复...</span>
+                  </div>
+                  <span className="text-xs text-amber-600">进度: {analysisProgress}%</span>
+                </div>
+              )}
+
+              {/* Completed notification */}
+              {showCompletedNotification && !showResumeDialog && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="text-green-600 font-bold">&#10003;</span>
+                    <span className="text-sm text-green-800">有已完成的分析报告，点击&quot;开始自检&quot;查看</span>
+                  </div>
+                  <button onClick={() => {
+                    setShowCompletedNotification(null);
+                    // Mark as dismissed
+                    utils.client.analysis.dismiss.mutate({ analysisId: showCompletedNotification }).catch(() => {});
+                  }}
+                    className="text-xs text-gray-500 hover:text-gray-700">
+                    关闭
                   </button>
                 </div>
               )}
@@ -559,6 +722,7 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
                 items={selfCheckItems}
                 onRetry={handleSelfCheck}
                 onNavigateToModify={handleNavigateToModify}
+                isThinking={isThinkingModel}
               />
             </div>
           )}
@@ -584,6 +748,9 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
                   }}
                   onNavigateToFinalize={() => setActiveTab('finalize')}
                   onRetry={() => setModifiedContent('')}
+                  onSaveModificationResult={(content, summary) => {
+                    saveModificationMutation.mutate({ projectId, chapterId, modificationContent: content, modificationSummary: summary });
+                  }}
                 />
               </div>
             ) : (
@@ -626,6 +793,9 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
                       }}
                       onNavigateToFinalize={() => setActiveTab('finalize')}
                       onRetry={() => setModifiedContent('')}
+                      onSaveModificationResult={(content, summary) => {
+                        saveModificationMutation.mutate({ projectId, chapterId, modificationContent: content, modificationSummary: summary });
+                      }}
                     />
                   </>
                 )}
@@ -680,7 +850,7 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
         projectId={projectId}
         conversationType="chapter"
         roleKey="writer"
-        title="AI 创作"
+        title={`AI 创作 — ${volume?.title || ''} / ${unit?.title || ''} / ${chapter?.title || ''}`}
         targetEntityId={chapterId}
         taskBrief={editableBrief}
         onSaveDraft={(content) => {
@@ -688,6 +858,14 @@ export function ChapterWorkspace({ projectId, chapterId }: ChapterWorkspaceProps
           setEditorContent(formatted);
           setActiveTab('draft');
           setChatOpen(false);
+          // R3c: 自动持久化到DB
+          saveChapterMutation.mutate({
+            chapterId,
+            content: formatted,
+            versionLabel: `草稿 v${(currentVersion?.versionNumber || 0) + 1}`,
+            isFinal: false,
+            wordCount: formatted.replace(/\s/g, '').length,
+          });
         }}
         onActionConfirmed={() => {
           utils.workflow.getChapterDetail.invalidate({ chapterId });

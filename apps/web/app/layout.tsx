@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import { TRPCProvider } from '@/lib/trpc-provider';
 import { Navbar } from '@/components/layout/navbar';
-import SpriteComponent from '@/components/sprite/sprite-component';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -20,7 +19,6 @@ export default function RootLayout({
         <TRPCProvider>
           <Navbar />
           {children}
-          <SpriteComponent />
         </TRPCProvider>
       </body>
     </html>

@@ -46,4 +46,4 @@ export interface AdapterConfig {
 // 适配器工厂
 export { OpenAICompatAdapter } from './adapters/openai-compat';
 export { AnthropicCompatAdapter } from './adapters/anthropic-compat';
-export { createAdapter } from './adapters/factory';
+export { createAdapter, getProviderDefaultModel } from './adapters/factory';

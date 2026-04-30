@@ -11,37 +11,12 @@ import {
 } from '../../db/schema';
 import { recordBeanTransaction } from '../sprite/bean-service';
 
-// 免费用户可创建的模板数量上限
-const FREE_TEMPLATE_LIMIT = 3;
-const PREMIUM_TEMPLATE_LIMIT = 10;
-// 免费用户可导入的模板数量上限
-const FREE_IMPORT_LIMIT = 3;
-const PREMIUM_IMPORT_LIMIT = 10;
-
-// 辅助：获取用户订阅状态
-async function getUserTier(userId: string): Promise<'free' | 'premium'> {
-  const { subscriptions } = await import('../../db/schema');
-  const [sub] = await db.select().from(subscriptions).where(eq(subscriptions.userId, userId));
-  if (!sub) return 'free';
-  const now = new Date();
-  if (sub.status === 'premium' && sub.currentPeriodEnd && sub.currentPeriodEnd > now) return 'premium';
-  if (sub.status === 'trial' && sub.trialEndsAt && sub.trialEndsAt > now) return 'premium';
-  return 'free';
+async function isTemplateCreationAllowed(_userId: string) {
+  return true;
 }
 
-// 辅助：计算用户VIP等级
-async function getUserVipLevel(userId: string): Promise<string> {
-  const { subscriptions } = await import('../../db/schema');
-  const [sub] = await db.select().from(subscriptions).where(eq(subscriptions.userId, userId));
-  if (!sub) return '免费版';
-  if (sub.status === 'premium' && sub.currentPeriodEnd) {
-    const daysLeft = Math.ceil((sub.currentPeriodEnd.getTime() - Date.now()) / 86400000);
-    if (daysLeft > 0) return daysLeft > 365 ? '年费VIP' : daysLeft > 30 ? 'VIP' : '体验VIP';
-  } else if (sub.status === 'trial' && sub.trialEndsAt) {
-    const daysLeft = Math.ceil((sub.trialEndsAt.getTime() - Date.now()) / 86400000);
-    if (daysLeft > 0) return daysLeft > 365 ? '年费VIP' : daysLeft > 30 ? 'VIP' : '体验VIP';
-  }
-  return '免费版';
+async function isTemplateImportAllowed(_userId: string) {
+  return true;
 }
 
 // 辅助：给模板创作者增加精灵豆
@@ -58,20 +33,22 @@ async function rewardCreator(creatorId: string, amount: number, description: str
 
 // 辅助：获取预览内容（未付费用户限制）
 function getLimitedPreview(content: string): string {
-  const lines = content.split('\n');
-  const fiveLines = lines.slice(0, 5).join('\n');
+  let newlineCount = 0;
+  let previewEnd = content.length;
+
+  for (let i = 0; i < content.length; i += 1) {
+    if (content[i] === '\n') {
+      newlineCount += 1;
+      if (newlineCount === 5) {
+        previewEnd = i;
+        break;
+      }
+    }
+  }
+
+  const fiveLines = content.slice(0, previewEnd);
   const oneThird = content.slice(0, Math.ceil(content.length / 3));
-  // 取较短者
   return fiveLines.length < oneThird.length ? fiveLines : oneThird;
-}
-
-// 辅助：获取模板创建数量限制
-function getTemplateLimit(tier: 'free' | 'premium'): number {
-  return tier === 'premium' ? PREMIUM_TEMPLATE_LIMIT : FREE_TEMPLATE_LIMIT;
-}
-
-function getImportLimit(tier: 'free' | 'premium'): number {
-  return tier === 'premium' ? PREMIUM_IMPORT_LIMIT : FREE_IMPORT_LIMIT;
 }
 
 export const templateRouter = router({
@@ -133,7 +110,7 @@ export const templateRouter = router({
         };
       }));
 
-      // 批量获取上传者信息（含VIP等级）
+      // 批量获取上传者信息
       const uploaderIds = [...new Set(itemsWithRatings.map(i => i.uploaderId).filter(Boolean))] as string[];
       let uploaderInfo: { id: string; nickname: string | null; displayId: string | null; avatarUrl: string | null }[] = [];
       if (uploaderIds.length > 0) {
@@ -145,15 +122,10 @@ export const templateRouter = router({
         }).from(users).where(inArray(users.id, uploaderIds));
       }
       const userMap = new Map(uploaderInfo.map(u => [u.id, u]));
-      // 批量计算VIP等级
-      const vipMap = new Map<string, string>();
-      for (const uid of uploaderIds) {
-        vipMap.set(uid, await getUserVipLevel(uid));
-      }
 
       return itemsWithRatings.map(item => ({
         ...item,
-        uploader: item.uploaderId ? { ...userMap.get(item.uploaderId)!, vipLevel: vipMap.get(item.uploaderId) || '免费版' } : null,
+        uploader: item.uploaderId ? userMap.get(item.uploaderId) || null : null,
       }));
     }),
 
@@ -212,7 +184,7 @@ export const templateRouter = router({
         };
       }));
 
-      // 批量获取上传者信息（含VIP等级）
+      // 批量获取上传者信息
       const uploaderIds = [...new Set(itemsWithRatings.map(i => i.uploaderId).filter(Boolean))] as string[];
       let uploaderInfo: { id: string; nickname: string | null; displayId: string | null; avatarUrl: string | null }[] = [];
       if (uploaderIds.length > 0) {
@@ -224,15 +196,10 @@ export const templateRouter = router({
         }).from(users).where(inArray(users.id, uploaderIds));
       }
       const userMap = new Map(uploaderInfo.map(u => [u.id, u]));
-      // 批量计算VIP等级
-      const vipMapSearch = new Map<string, string>();
-      for (const uid of uploaderIds) {
-        vipMapSearch.set(uid, await getUserVipLevel(uid));
-      }
 
       return itemsWithRatings.map(item => ({
         ...item,
-        uploader: item.uploaderId ? { ...userMap.get(item.uploaderId)!, vipLevel: vipMapSearch.get(item.uploaderId) || '免费版' } : null,
+        uploader: item.uploaderId ? userMap.get(item.uploaderId) || null : null,
       }));
     }),
 
@@ -268,12 +235,13 @@ export const templateRouter = router({
       const userId = (ctx as any).userId;
       const isOwner = item.uploaderId === userId;
       const isPurchased = userId ? await isTemplatePurchased(userId, item.id) : false;
+      const isLiked = userId ? await isTemplateLiked(userId, item.id) : false;
       const isFree = (item.price ?? 0) === 0;
 
       let displayContent: string | null = null;
       let isLimited = false;
 
-      if (isFree || isPurchased || isOwner) {
+      if (isFree || isPurchased || isLiked || isOwner) {
         displayContent = item.content;
       } else {
         // 付费模板未购买：只返回预览
@@ -281,7 +249,7 @@ export const templateRouter = router({
         isLimited = true;
       }
 
-      // 获取上传者信息（含VIP等级）
+      // 获取上传者信息
       let uploader = null;
       if (item.uploaderId) {
         const [u] = await db.select({
@@ -291,7 +259,7 @@ export const templateRouter = router({
           avatarUrl: users.avatarUrl,
         }).from(users).where(eq(users.id, item.uploaderId));
         if (u) {
-          uploader = { ...u, vipLevel: await getUserVipLevel(item.uploaderId) };
+          uploader = u;
         }
       }
 
@@ -302,6 +270,10 @@ export const templateRouter = router({
         ratingCount: Number(ratingResult?.count) || 0,
         likeCount: Number(likeResult?.count) || 0,
         isLimited,
+        isPurchased,
+        isLiked,
+        isOwner,
+        isFree,
         uploader,
       };
     }),
@@ -493,7 +465,6 @@ export const templateRouter = router({
       projectId: z.string().uuid().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const tier = await getUserTier(ctx.userId);
       const [template] = await db.select().from(templates).where(eq(templates.id, input.templateId));
       if (!template) throw new TRPCError({ code: 'NOT_FOUND', message: '模板不存在' });
 
@@ -532,15 +503,10 @@ export const templateRouter = router({
         }
       }
 
-      // 检查导入数量限制
-      const importCount = await db.select({ count: sql<number>`COUNT(*)` })
-        .from(userTemplates)
-        .where(eq(userTemplates.userId, ctx.userId));
-      const limit = getImportLimit(tier);
-      if ((importCount[0]?.count ?? 0) >= limit) {
+      if (!(await isTemplateImportAllowed(ctx.userId))) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: `${tier === 'premium' ? '付费' : '免费'}用户最多导入 ${limit} 个模板，当前已达上限`,
+          message: '当前账号暂不可继续导入模板',
         });
       }
 
@@ -607,7 +573,6 @@ export const templateRouter = router({
       projectId: z.string().uuid(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const tier = await getUserTier(ctx.userId);
       const [template] = await db.select().from(templates).where(eq(templates.id, input.templateId));
       if (!template) throw new TRPCError({ code: 'NOT_FOUND', message: '模板不存在' });
 
@@ -646,15 +611,10 @@ export const templateRouter = router({
         }
       }
 
-      // 检查导入数量限制
-      const importCount = await db.select({ count: sql<number>`COUNT(*)` })
-        .from(userTemplates)
-        .where(eq(userTemplates.userId, ctx.userId));
-      const limit = getImportLimit(tier);
-      if ((importCount[0]?.count ?? 0) >= limit) {
+      if (!(await isTemplateImportAllowed(ctx.userId))) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: `${tier === 'premium' ? '付费' : '免费'}用户最多导入 ${limit} 个模板，当前已达上限`,
+          message: '当前账号暂不可继续导入模板',
         });
       }
 
@@ -667,6 +627,13 @@ export const templateRouter = router({
       const { settings, aiRoles } = await import('../../db/schema');
       let importTarget = '';
       let importTargetLabel = '';
+
+      // AI 角色映射：key → 中文名称
+      const roleNames: Record<string, string> = {
+        editor: '文学编辑参考',
+        setting_editor: '设定编辑参考',
+        writer: '正文作者参考',
+      };
 
       switch (template.category) {
         case 'setting': {
@@ -693,30 +660,54 @@ export const templateRouter = router({
           break;
         }
         case 'ai_prompt': {
-          // AI角色提示词模板：更新已有的 AI 角色（不创建新角色）
-          const existingRole = await db.select()
-            .from(aiRoles)
-            .where(and(eq(aiRoles.projectId, input.projectId), eq(aiRoles.name, template.title)))
-            .limit(1);
+          // AI角色提示词模板：优先使用 aiTargetRole 匹配目标角色，fallback 到 title 匹配
+          let targetRoleKey: string | null = (template as any).aiTargetRole || null;
+          let existingRole;
+
+          if (targetRoleKey && roleNames[targetRoleKey]) {
+            // 使用 aiTargetRole 字段匹配
+            existingRole = await db.select()
+              .from(aiRoles)
+              .where(and(eq(aiRoles.projectId, input.projectId), eq(aiRoles.role, targetRoleKey)))
+              .limit(1);
+          } else {
+            // Fallback: 按 title 匹配
+            existingRole = await db.select()
+              .from(aiRoles)
+              .where(and(eq(aiRoles.projectId, input.projectId), eq(aiRoles.name, template.title)))
+              .limit(1);
+          }
+
           if (existingRole.length === 0) {
+            const missingRole = targetRoleKey ? (roleNames[targetRoleKey] || template.title) : template.title;
             throw new TRPCError({
               code: 'BAD_REQUEST',
-              message: `项目中不存在 AI 角色「${template.title}」，请先在项目中创建该角色后再导入`,
+              message: `项目中不存在 AI 角色「${missingRole}」，请先在项目中创建该角色后再导入`,
             });
           }
           await db.update(aiRoles)
             .set({ systemPrompt: template.content })
             .where(eq(aiRoles.id, existingRole[0].id));
           importTarget = 'ai_role';
-          importTargetLabel = `AI角色「${template.title}」`;
+          importTargetLabel = `AI角色「${existingRole[0].name}」`;
           break;
         }
         case 'style':
         case 'structure':
         case 'methodology': {
-          // 风格/结构/方法论模板：追加到已有的文学编辑/小说作者角色（不创建新角色）
-          const roleKey = template.category === 'style' ? 'novelist' : 'editor';
-          const roleLabel = template.category === 'style' ? '小说作者参考' : '文学编辑参考';
+          // 风格/结构/方法论模板：根据 aiTargetRole 确定目标角色
+          let roleKey: string;
+          let roleLabel: string;
+
+          const targetRole = (template as any).aiTargetRole;
+          if (targetRole && roleNames[targetRole]) {
+            roleKey = targetRole;
+            roleLabel = roleNames[targetRole];
+          } else {
+            // Fallback: 按原有逻辑（style→novelist，其他→editor）
+            roleKey = template.category === 'style' ? 'novelist' : 'editor';
+            roleLabel = template.category === 'style' ? '正文作者参考' : '文学编辑参考';
+          }
 
           const existingRole = await db.select()
             .from(aiRoles)
@@ -741,7 +732,7 @@ export const templateRouter = router({
         default: {
           throw new TRPCError({
             code: 'BAD_REQUEST',
-            message: `不支持的模板分类：${template.category || '未分类'}，模板只能导入到已有的文学编辑、设定编辑、小说作者角色中`,
+            message: `不支持的模板分类：${template.category || '未分类'}，模板只能导入到已有的文学编辑、设定编辑、正文作者角色中`,
           });
         }
       }
@@ -762,7 +753,26 @@ export const templateRouter = router({
         canRepublish: false,
         isFromPurchase: template.source === 'user' && (template.price ?? 0) > 0,
         category: template.category,
+        aiTargetRole: (template as any).aiTargetRole || null,
       }).onConflictDoNothing();
+
+      // 标记项目为从付费模板导入（禁用导出）
+      const isPaidTemplate = template.source === 'user' && (template.price ?? 0) > 0;
+      if (isPaidTemplate) {
+        const currentConfig = (project.config || {}) as Record<string, unknown>;
+        const { projects } = await import('../../db/schema');
+        await db.update(projects)
+          .set({
+            config: { ...currentConfig, importedFromTemplate: input.templateId, isPaidTemplate: true },
+            updatedAt: new Date(),
+          })
+          .where(eq(projects.id, input.projectId));
+      }
+      // 保存指纹（付费模板）
+      if ((template.price ?? 0) > 0 && template.content) {
+        const { saveTemplateFingerprint } = await import('./content-fingerprint');
+        saveTemplateFingerprint(input.templateId, template.content).catch(() => {});
+      }
 
       return {
         ok: true,
@@ -774,13 +784,17 @@ export const templateRouter = router({
 
   // 获取用户已导入/创建的模板
   myTemplates: protectedProcedure
-    .input(z.object({ projectId: z.string().uuid().optional() }))
+    .input(z.object({
+      projectId: z.string().uuid().optional(),
+      category: z.string().optional(),
+    }))
     .query(async ({ ctx, input }) => {
       const where = [
         eq(userTemplates.userId, ctx.userId),
         sql`${userTemplates.deletedAt} IS NULL`,
       ];
       if (input.projectId) where.push(eq(userTemplates.projectId, input.projectId));
+      if (input.category) where.push(eq(userTemplates.category, input.category));
 
       return db.select()
         .from(userTemplates)
@@ -845,20 +859,10 @@ export const templateRouter = router({
       description: z.string().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const tier = await getUserTier(ctx.userId);
-
-      // 检查创建数量限制
-      const countResult = await db.select({ count: sql<number>`COUNT(*)` })
-        .from(userTemplates)
-        .where(and(
-          eq(userTemplates.userId, ctx.userId),
-          sql`${userTemplates.deletedAt} IS NULL`,
-        ));
-      const limit = getTemplateLimit(tier);
-      if ((countResult[0]?.count ?? 0) >= limit) {
+      if (!(await isTemplateCreationAllowed(ctx.userId))) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: `${tier === 'premium' ? '付费' : '免费'}用户最多创建 ${limit} 个模板，当前已达上限`,
+          message: '当前账号暂不可继续创建模板',
         });
       }
 
@@ -950,23 +954,14 @@ export const templateRouter = router({
       title: z.string().min(1),
       content: z.string().min(1),
       category: z.string().default('methodology'),
+      aiTargetRole: z.string().optional(),
       description: z.string().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const tier = await getUserTier(ctx.userId);
-
-      // 检查创建数量限制
-      const countResult = await db.select({ count: sql<number>`COUNT(*)` })
-        .from(userTemplates)
-        .where(and(
-          eq(userTemplates.userId, ctx.userId),
-          sql`${userTemplates.deletedAt} IS NULL`,
-        ));
-      const limit = getTemplateLimit(tier);
-      if ((countResult[0]?.count ?? 0) >= limit) {
+      if (!(await isTemplateCreationAllowed(ctx.userId))) {
         throw new TRPCError({
           code: 'FORBIDDEN',
-          message: `${tier === 'premium' ? '付费' : '免费'}用户最多创建 ${limit} 个模板，当前已达上限`,
+          message: '当前账号暂不可继续创建模板',
         });
       }
 
@@ -978,6 +973,7 @@ export const templateRouter = router({
         description: input.description || '',
         source: 'custom',
         category: input.category,
+        aiTargetRole: input.aiTargetRole || null,
         canRepublish: true,
       }).returning();
 
@@ -1096,6 +1092,7 @@ export const templateRouter = router({
       title: z.string().min(1),
       description: z.string().optional(),
       category: z.string().optional(),
+      aiTargetRole: z.string().optional(),
       disclaimerVersion: z.number().min(1),
     }))
     .mutation(async ({ ctx, input }) => {
@@ -1133,6 +1130,7 @@ export const templateRouter = router({
         title: input.title,
         description: input.description,
         category: input.category || ut.category,
+        aiTargetRole: input.aiTargetRole || ut.aiTargetRole || null,
         content: ut.content,
         preview: getLimitedPreview(ut.content),
         price: 0,
@@ -1214,12 +1212,14 @@ export const templateRouter = router({
   // ===== 管理员审核 =====
 
   adminListSubmissions: adminProcedure.query(async () => {
+    // 返回所有用户上传的模板（含待审核/已通过/已拒绝），排除已删除的
     const items = await db.select({
       id: templates.id,
       title: templates.title,
       description: templates.description,
       source: templates.source,
       category: templates.category,
+      aiTargetRole: templates.aiTargetRole,
       content: templates.content,
       price: templates.price,
       auditStatus: templates.auditStatus,
@@ -1228,7 +1228,10 @@ export const templateRouter = router({
       uploaderId: templates.uploaderId,
     })
       .from(templates)
-      .where(eq(templates.auditStatus, 'pending'))
+      .where(and(
+        eq(templates.source, 'user'),
+        sql`${templates.deletedAt} IS NULL`,
+      ))
       .orderBy(desc(templates.createdAt));
 
     // 获取上传者信息
@@ -1309,6 +1312,7 @@ export const templateRouter = router({
       title: z.string().min(1),
       description: z.string().optional(),
       category: z.string().optional(),
+      aiTargetRole: z.string().optional(),
       content: z.string().min(1),
       price: z.number().min(0).default(0),
     }))
@@ -1317,6 +1321,7 @@ export const templateRouter = router({
         title: input.title,
         description: input.description,
         category: input.category,
+        aiTargetRole: input.aiTargetRole || null,
         content: input.content,
         price: input.price,
         source: 'official',
@@ -1333,6 +1338,7 @@ export const templateRouter = router({
       title: z.string().optional(),
       description: z.string().optional(),
       category: z.string().optional(),
+      aiTargetRole: z.string().optional(),
       content: z.string().optional(),
       price: z.number().optional(),
       isPublished: z.boolean().optional(),
@@ -1371,6 +1377,128 @@ export const templateRouter = router({
         .set({ isPublished: newPublished, updatedAt: new Date() })
         .where(eq(templates.id, input.id));
       return { ok: true, isPublished: newPublished };
+    }),
+
+  // 修改用户模板（管理员权限）
+  adminUpdateUserTemplate: adminProcedure
+    .input(z.object({
+      id: z.string().uuid(),
+      title: z.string().optional(),
+      description: z.string().optional(),
+      category: z.string().optional(),
+      aiTargetRole: z.string().optional(),
+      content: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const [template] = await db.select()
+        .from(templates)
+        .where(and(eq(templates.id, input.id), eq(templates.source, 'user')));
+      if (!template) throw new TRPCError({ code: 'NOT_FOUND', message: '用户模板不存在' });
+
+      const updates: Record<string, unknown> = { updatedAt: new Date() };
+      if (input.title !== undefined) updates.title = input.title;
+      if (input.description !== undefined) updates.description = input.description;
+      if (input.category !== undefined) updates.category = input.category;
+      if (input.aiTargetRole !== undefined) updates.aiTargetRole = input.aiTargetRole || null;
+      if (input.content !== undefined) updates.content = input.content;
+
+      await db.update(templates).set(updates).where(eq(templates.id, input.id));
+      return { ok: true };
+    }),
+
+  // 删除用户模板（管理员权限，软删除）
+  adminDeleteUserTemplate: adminProcedure
+    .input(z.object({ id: z.string().uuid() }))
+    .mutation(async ({ input }) => {
+      const [template] = await db.select()
+        .from(templates)
+        .where(and(eq(templates.id, input.id), eq(templates.source, 'user')));
+      if (!template) throw new TRPCError({ code: 'NOT_FOUND', message: '用户模板不存在' });
+
+      // 同时软删除关联的用户模板
+      await db.update(userTemplates)
+        .set({ deletedAt: new Date() })
+        .where(eq(userTemplates.templateId, input.id));
+
+      // 将模板标记为已拒绝（使其不再显示在商城）
+      await db.update(templates)
+        .set({ auditStatus: 'rejected', isPublished: false, updatedAt: new Date() })
+        .where(eq(templates.id, input.id));
+      return { ok: true };
+    }),
+
+  // 获取已删除的用户模板（30天内，可恢复）
+  adminListDeletedUserTemplates: adminProcedure.query(async () => {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const items = await db.select({
+      id: templates.id,
+      title: templates.title,
+      description: templates.description,
+      source: templates.source,
+      category: templates.category,
+      aiTargetRole: templates.aiTargetRole,
+      content: templates.content,
+      price: templates.price,
+      auditStatus: templates.auditStatus,
+      reviewReason: templates.reviewReason,
+      createdAt: templates.createdAt,
+      uploaderId: templates.uploaderId,
+      deletedAt: templates.deletedAt,
+    })
+      .from(templates)
+      .where(and(
+        eq(templates.source, 'user'),
+        sql`${templates.deletedAt} IS NOT NULL`,
+        sql`${templates.deletedAt} > ${thirtyDaysAgo}`,
+      ))
+      .orderBy(desc(templates.deletedAt));
+
+    // 获取上传者信息
+    const uploaderIds = [...new Set(items.map(i => i.uploaderId).filter(Boolean))] as string[];
+    let uploaderInfo: { id: string; nickname: string | null; displayId: string | null; avatarUrl: string | null }[] = [];
+    if (uploaderIds.length > 0) {
+      uploaderInfo = await db.select({
+        id: users.id,
+        nickname: users.nickname,
+        displayId: users.displayId,
+        avatarUrl: users.avatarUrl,
+      }).from(users).where(inArray(users.id, uploaderIds));
+    }
+    const userMap = new Map(uploaderInfo.map(u => [u.id, u]));
+
+    return items.map(item => ({
+      ...item,
+      uploader: item.uploaderId ? userMap.get(item.uploaderId) : null,
+    }));
+  }),
+
+  // 恢复已删除的用户模板
+  adminRestoreUserTemplate: adminProcedure
+    .input(z.object({ id: z.string().uuid() }))
+    .mutation(async ({ input }) => {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const [updated] = await db.update(templates)
+        .set({ deletedAt: null, updatedAt: new Date() })
+        .where(and(
+          eq(templates.id, input.id),
+          eq(templates.source, 'user'),
+          sql`${templates.deletedAt} IS NOT NULL`,
+          sql`${templates.deletedAt} > ${thirtyDaysAgo}`,
+        ))
+        .returning();
+
+      if (!updated) throw new TRPCError({ code: 'NOT_FOUND', message: '模板不存在或已超过30天' });
+
+      // 同时恢复关联的用户模板
+      await db.update(userTemplates)
+        .set({ deletedAt: null })
+        .where(eq(userTemplates.templateId, input.id));
+
+      return { ok: true };
     }),
 
   // ===== 免责声明 =====
@@ -1515,6 +1643,15 @@ export const templateRouter = router({
     return likes;
   }),
 
+  // 内容指纹检测 — 检查用户输入文本是否匹配付费模板
+  checkFingerprint: protectedProcedure
+    .input(z.object({ text: z.string() }))
+    .mutation(async ({ input }) => {
+      if (!input.text || input.text.length < 200) return { matched: false };
+      const { checkContentFingerprint } = await import('./content-fingerprint');
+      return checkContentFingerprint(input.text);
+    }),
+
 });
 
 // 辅助函数：检查用户是否已购买模板
@@ -1526,4 +1663,14 @@ async function isTemplatePurchased(userId: string, templateId: string): Promise<
       eq(templatePurchases.userId, userId),
     ));
   return !!purchase;
+}
+
+async function isTemplateLiked(userId: string, templateId: string): Promise<boolean> {
+  const [like] = await db.select()
+    .from(templateLikes)
+    .where(and(
+      eq(templateLikes.templateId, templateId),
+      eq(templateLikes.userId, userId),
+    ));
+  return !!like;
 }

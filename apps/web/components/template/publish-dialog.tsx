@@ -9,12 +9,14 @@ export default function PublishDialog({
   userTemplateId,
   initialTitle,
   initialCategory,
+  initialAiTargetRole,
   onClose,
   onSuccess,
 }: {
   userTemplateId: string;
   initialTitle: string;
   initialCategory?: string | null;
+  initialAiTargetRole?: string | null;
   onClose: () => void;
   onSuccess: () => void;
 }) {
@@ -22,6 +24,7 @@ export default function PublishDialog({
   const [title, setTitle] = useState(initialTitle);
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState(initialCategory || 'methodology');
+  const [aiTargetRole, setAiTargetRole] = useState(initialAiTargetRole || '');
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
 
   const utils = trpc.useUtils();
@@ -49,6 +52,7 @@ export default function PublishDialog({
       title: title.trim(),
       description: description.trim() || undefined,
       category,
+      aiTargetRole: aiTargetRole || undefined,
       disclaimerVersion: disclaimer.version,
     });
   };
@@ -102,6 +106,17 @@ export default function PublishDialog({
                     <option key={k} value={k}>{v}</option>
                   ))}
                 </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">对应 AI 角色</label>
+                <select value={aiTargetRole} onChange={e => setAiTargetRole(e.target.value)}
+                  className="w-full text-sm border border-gray-200 rounded px-3 py-2">
+                  <option value="">无</option>
+                  <option value="editor">文学编辑</option>
+                  <option value="setting_editor">设定编辑</option>
+                  <option value="writer">正文作者</option>
+                </select>
+                <p className="text-xs text-gray-400 mt-1">选择该模板导入后会应用到哪个 AI 角色</p>
               </div>
               <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700">
                 <p className="font-medium mb-1">统一价格模式</p>

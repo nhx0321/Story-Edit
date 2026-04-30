@@ -15,7 +15,7 @@ export function ExperienceTemplateImport({ open, onClose, projectId, onImported 
   const [showCustomForm, setShowCustomForm] = useState(false);
   const [customTitle, setCustomTitle] = useState('');
   const [customContent, setCustomContent] = useState('');
-  const [customLevel, setCustomLevel] = useState<'L0' | 'L1' | 'L2' | 'L3'>('L2');
+  const [customLevel, setCustomLevel] = useState<'L0' | 'L1' | 'L2' | 'L3' | 'L4'>('L2');
   const [customCategory, setCustomCategory] = useState('');
 
   const { data: myTemplates } = trpc.template.myTemplates.useQuery(
@@ -58,12 +58,12 @@ export function ExperienceTemplateImport({ open, onClose, projectId, onImported 
       const template = experienceTemplates?.find(t => t.id === ids[index]);
       if (template) {
         // Parse template content to extract level/category if possible
-        let level: 'L0' | 'L1' | 'L2' | 'L3' = 'L2';
+        let level: 'L0' | 'L1' | 'L2' | 'L3' | 'L4' = 'L2';
         let category = template.title;
-        const levelMatch = template.title.match(/\[L[0-3]\]/);
+        const levelMatch = template.title.match(/\[L[0-4]\]/);
         if (levelMatch) {
-          level = levelMatch[0].slice(1, 3) as 'L0' | 'L1' | 'L2' | 'L3';
-          category = template.title.replace(/\[L[0-3]\]\s*/, '');
+          level = levelMatch[0].slice(1, 3) as 'L0' | 'L1' | 'L2' | 'L3' | 'L4';
+          category = template.title.replace(/\[L[0-4]\]\s*/, '');
         }
         createMemory.mutate({
           projectId,
@@ -108,10 +108,10 @@ export function ExperienceTemplateImport({ open, onClose, projectId, onImported 
               <div className="flex gap-2">
                 <select
                   value={customLevel}
-                  onChange={e => setCustomLevel(e.target.value as 'L0' | 'L1' | 'L2' | 'L3')}
+                  onChange={e => setCustomLevel(e.target.value as 'L0' | 'L1' | 'L2' | 'L3' | 'L4')}
                   className="text-xs bg-gray-50 border border-gray-200 rounded px-2 py-1"
                 >
-                  {['L0', 'L1', 'L2', 'L3'].map(l => (
+                  {['L0', 'L1', 'L2', 'L3', 'L4'].map(l => (
                     <option key={l} value={l}>{l}</option>
                   ))}
                 </select>

@@ -2,50 +2,67 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { useParams } from 'next/navigation';
 import { trpc } from '@/lib/trpc';
 
-export default function MarketplaceItemPage({ params }: { params: { id: string } }) {
+const AI_ROLE_LABELS: Record<string, string> = {
+  editor: '文学编辑',
+  setting_editor: '设定编辑',
+  writer: '正文作者',
+};
+
+export default function MarketplaceItemPage() {
+  const { id: itemId } = useParams<{ id: string }>();
   const [userRating, setUserRating] = useState(0);
   const [projectId, setProjectId] = useState('');
   const [showProjectSelect, setShowProjectSelect] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [showReplies, setShowReplies] = useState<Record<string, boolean>>({});
   const [replyTexts, setReplyTexts] = useState<Record<string, string>>({});
+  const [hasLiked, setHasLiked] = useState(false);
 
-  const { data: item, isLoading } = trpc.template.getById.useQuery({ id: params.id });
+  const { data: item, isLoading } = trpc.template.getById.useQuery({ id: itemId });
   const { data: myProjects } = trpc.project.list.useQuery();
-  const { data: comments } = trpc.template.getComments.useQuery({ templateId: params.id, parentId: null });
+  const { data: comments } = trpc.template.getComments.useQuery({ templateId: itemId, parentId: null });
 
   const likeMutation = trpc.template.like.useMutation({
-    onSuccess: () => utils.template.getById.invalidate({ id: params.id }),
+    onSuccess: async (result) => {
+      setHasLiked(result.liked);
+      await Promise.all([
+        utils.template.getById.invalidate({ id: itemId }),
+        utils.template.myLikes.invalidate(),
+        utils.template.list.invalidate(),
+      ]);
+    },
   });
   const rateMutation = trpc.template.rate.useMutation();
   const importMutation = trpc.template.smartImport.useMutation();
   const addComment = trpc.template.addComment.useMutation({
-    onSuccess: () => utils.template.getComments.invalidate({ templateId: params.id, parentId: null }),
+    onSuccess: () => utils.template.getComments.invalidate({ templateId: itemId, parentId: null }),
   });
   const addReply = trpc.template.addComment.useMutation({
-    onSuccess: () => utils.template.getComments.invalidate({ templateId: params.id, parentId: null }),
+    onSuccess: () => utils.template.getComments.invalidate({ templateId: itemId, parentId: null }),
   });
   const deleteComment = trpc.template.deleteComment.useMutation({
-    onSuccess: () => utils.template.getComments.invalidate({ templateId: params.id, parentId: null }),
+    onSuccess: () => utils.template.getComments.invalidate({ templateId: itemId, parentId: null }),
   });
   const utils = trpc.useUtils();
 
   const handleLike = () => {
-    if (!confirm('点赞将消耗 1 精灵豆，确认继续？')) return;
-    likeMutation.mutate({ templateId: params.id });
+    if (hasViewed) return;
+    if (!confirm('查看全文将消耗 1 精灵豆，确认继续？')) return;
+    likeMutation.mutate({ templateId: itemId });
   };
   const handleRate = (score: number) => {
     setUserRating(score);
-    rateMutation.mutate({ templateId: params.id, score });
+    rateMutation.mutate({ templateId: itemId, score });
   };
   const handleImport = async () => {
     if (!confirm('导入将消耗 10 精灵豆，确认继续？')) return;
     if (!projectId) return;
     try {
       const result = await importMutation.mutateAsync({
-        templateId: params.id,
+        templateId: itemId,
         projectId,
       });
       alert(`导入成功：${result.message}`);
@@ -56,13 +73,13 @@ export default function MarketplaceItemPage({ params }: { params: { id: string }
   };
   const handleAddComment = () => {
     if (!commentText.trim()) return;
-    addComment.mutate({ templateId: params.id, content: commentText });
+    addComment.mutate({ templateId: itemId, content: commentText });
     setCommentText('');
   };
   const handleReply = (parentId: string) => {
     const text = replyTexts[parentId] || '';
     if (!text.trim()) return;
-    addReply.mutate({ templateId: params.id, content: text, parentId });
+    addReply.mutate({ templateId: itemId, content: text, parentId });
     setReplyTexts(prev => ({ ...prev, [parentId]: '' }));
   };
 
@@ -70,7 +87,15 @@ export default function MarketplaceItemPage({ params }: { params: { id: string }
   if (!item) return <div className="min-h-screen bg-gray-50 flex items-center justify-center text-gray-400">模板不存在</div>;
 
   const isPaid = !item.isLimited;
-  const priceCents = item.price ?? 0;
+  const hasViewed = item.isFree || item.isPurchased || item.isLiked || item.isOwner || hasLiked;
+  const canViewFull = isPaid || hasViewed;
+
+  // 按行截断（前3行）
+  const truncateToLines = (text: string, maxLines: number) => {
+    const lines = text.split('\n');
+    if (lines.length <= maxLines) return { truncated: text, hasMore: false };
+    return { truncated: lines.slice(0, maxLines).join('\n'), hasMore: true };
+  };
 
   return (
     <main className="min-h-screen bg-gray-50 p-8">
@@ -83,10 +108,17 @@ export default function MarketplaceItemPage({ params }: { params: { id: string }
             <span className={`text-xs px-2 py-0.5 rounded-full ${
               item.source === 'official' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
             }`}>{item.source === 'official' ? '官方' : '用户上传'}</span>
+            {(item as any).aiTargetRole && AI_ROLE_LABELS[(item as any).aiTargetRole] && (
+              <span className={`text-xs px-2 py-0.5 rounded-full ${
+                (item as any).aiTargetRole === 'editor' ? 'bg-blue-100 text-blue-700' :
+                (item as any).aiTargetRole === 'setting_editor' ? 'bg-purple-100 text-purple-700' :
+                'bg-green-100 text-green-700'
+              }`}>{AI_ROLE_LABELS[(item as any).aiTargetRole]}</span>
+            )}
             {item.source === 'official' ? (
               <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">免费</span>
             ) : (
-              <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">1豆预览 · 10豆导入</span>
+              <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">1豆查看 · 10豆导入</span>
             )}
           </div>
 
@@ -99,7 +131,7 @@ export default function MarketplaceItemPage({ params }: { params: { id: string }
             <span>{item.importCount} 导入</span>
             <span>{item.commentsCount} 评论</span>
             <span>评分 {typeof item.avgRating === 'number' ? item.avgRating.toFixed(1) : '暂无'} ({item.ratingCount} 人)</span>
-            <span>{item.likeCount} 点赞</span>
+            <span>{item.likeCount} 查看</span>
           </div>
 
           {/* 上传者信息 */}
@@ -107,21 +139,15 @@ export default function MarketplaceItemPage({ params }: { params: { id: string }
             <div className="flex items-center gap-2 mb-4 pb-4 border-b border-gray-100">
               <span className="text-base">{item.uploader.avatarUrl || '👤'}</span>
               <span className="text-sm text-gray-600">{item.uploader.nickname || '未知用户'}</span>
-              {item.uploader.vipLevel && item.uploader.vipLevel !== '免费版' && (
-                <span className={`text-xs px-2 py-0.5 rounded-full ${
-                  item.uploader.vipLevel === '年费VIP' ? 'bg-yellow-100 text-yellow-700'
-                  : item.uploader.vipLevel === 'VIP' ? 'bg-blue-100 text-blue-700'
-                  : 'bg-green-100 text-green-700'
-                }`}>{item.uploader.vipLevel}</span>
-              )}
             </div>
           )}
 
           {/* 点赞和评分 */}
           <div className="flex items-center gap-4 mb-6 pb-6 border-b border-gray-100">
             <button onClick={handleLike}
-              className="text-sm text-gray-500 hover:text-red-500 transition">
-              ♥ 点赞
+              disabled={hasViewed}
+              className="text-sm text-gray-500 hover:text-blue-500 transition disabled:text-gray-300 disabled:cursor-default">
+              {hasViewed ? '已解锁全文' : '👁 查看全文'}
             </button>
             <div className="flex items-center gap-1">
               <span className="text-sm text-gray-400 mr-1">评分：</span>
@@ -137,20 +163,30 @@ export default function MarketplaceItemPage({ params }: { params: { id: string }
           {/* 内容展示 */}
           <div className="prose prose-gray max-w-none mb-8">
             <h3 className="text-sm font-semibold text-gray-700 mb-2">
-              {isPaid ? '完整内容' : '预览内容'}
+              {canViewFull ? '完整内容' : '预览内容（前三行）'}
             </h3>
             {item.content ? (
               <>
                 <pre className="whitespace-pre-wrap text-sm text-gray-600 bg-gray-50 rounded-lg p-4 border border-gray-100 max-h-96 overflow-y-auto">
-                  {item.content}
+                  {canViewFull
+                    ? item.content
+                    : (() => {
+                        const { truncated, hasMore } = truncateToLines(item.content, 3);
+                        return truncated + (hasMore ? '\n\n… 支付 1 精灵豆可查看完整内容' : '');
+                      })()}
                 </pre>
-                {item.isLimited && item.source === 'user' && (
+                {item.isLimited && item.source === 'user' && !hasViewed && (
                   <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg p-3 text-center">
-                    <p className="text-sm text-amber-700">以上为预览内容，点赞需 1 精灵豆，导入需 10 精灵豆</p>
+                    <p className="text-sm text-amber-700">为保护创作者权益，需要您支付1精灵豆方可查看模板全文</p>
                     <button onClick={() => handleLike()}
                       className="mt-2 px-6 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 transition">
-                      1 豆点赞预览
+                      1 豆查看全文
                     </button>
+                  </div>
+                )}
+                {(hasLiked || item.isLiked) && item.isLimited && (
+                  <div className="mt-3 bg-green-50 border border-green-200 rounded-lg p-3 text-center">
+                    <p className="text-sm text-green-700">已查看，可查看完整内容</p>
                   </div>
                 )}
               </>
@@ -189,12 +225,29 @@ export default function MarketplaceItemPage({ params }: { params: { id: string }
                     </select>
                     {/* 导入目标提示 */}
                     <div className="text-xs bg-blue-50 text-blue-600 rounded-lg p-2 mb-3">
-                      {item.category === 'setting' && '📋 设定模板将导入到项目设定中'}
-                      {item.category === 'style' && '📋 风格模板将追加到已有的小说作者参考中（不会创建新角色）'}
-                      {item.category === 'structure' && '📋 结构模板将追加到已有的文学编辑参考中（不会创建新角色）'}
-                      {item.category === 'methodology' && '📋 方法论模板将追加到已有的文学编辑参考中（不会创建新角色）'}
-                      {item.category === 'ai_prompt' && '📋 提示词模板将更新已有的同名AI角色（不会创建新角色）'}
-                      {!item.category && '📋 模板将导入到项目中已有的角色'}
+                      {(() => {
+                        const role = (item as any).aiTargetRole;
+                        if (item.category === 'setting') return '📋 设定模板将导入到项目设定中';
+                        if (item.category === 'style') {
+                          return role === 'writer' ? '📋 风格模板将追加到正文作者提示词中' :
+                                 role === 'setting_editor' ? '📋 风格模板将追加到设定编辑提示词中' :
+                                 '📋 风格模板将追加到文学编辑提示词中';
+                        }
+                        if (item.category === 'structure') {
+                          return role === 'editor' ? '📋 结构模板将追加到文学编辑提示词中' :
+                                 role === 'setting_editor' ? '📋 结构模板将追加到设定编辑提示词中' :
+                                 '📋 结构模板将追加到正文作者提示词中';
+                        }
+                        if (item.category === 'methodology') {
+                          return role === 'editor' ? '📋 方法论模板将追加到文学编辑提示词中' :
+                                 role === 'setting_editor' ? '📋 方法论模板将追加到设定编辑提示词中' :
+                                 '📋 方法论模板将追加到正文作者提示词中';
+                        }
+                        if (item.category === 'ai_prompt') {
+                          return role ? `📋 提示词模板将更新${AI_ROLE_LABELS[role] || '对应'}角色提示词` : '📋 提示词模板将更新同名AI角色提示词';
+                        }
+                        return '📋 模板将导入到项目中已有的角色';
+                      })()}
                     </div>
                     <button onClick={handleImport}
                       disabled={!projectId || importMutation.isPending}
@@ -227,7 +280,7 @@ export default function MarketplaceItemPage({ params }: { params: { id: string }
           {/* 评论列表 */}
           <div className="space-y-3">
             {comments?.map(c => (
-              <CommentItem key={c.id} comment={c} templateId={params.id}
+              <CommentItem key={c.id} comment={c} templateId={itemId}
                 onReply={(parentId, text) => {
                   setReplyTexts(prev => ({ ...prev, [parentId]: text }));
                 }}

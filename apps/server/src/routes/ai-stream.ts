@@ -1,4 +1,4 @@
-// AI 流式输出 SSE 端点
+// AI 流式输出 SSE 端点 + 后台继续（断线重连）
 import type { FastifyInstance } from 'fastify';
 import { eq, and } from 'drizzle-orm';
 import { db } from '../db';
@@ -7,6 +7,17 @@ import { verifyToken } from '../services/auth/utils';
 import { decryptApiKey } from '../services/ai-gateway/crypto';
 import { createAdapter } from '@story-edit/ai-adapters';
 import type { AIMessage } from '@story-edit/ai-adapters';
+import {
+  createJob,
+  getJobMeta,
+  completeJob,
+  failJob,
+  appendEvent,
+  getEvents,
+  subscribeToJob,
+  isRedisAvailable,
+} from '../services/ai-job/manager';
+import type { StreamEvent } from '../services/ai-job/types';
 
 interface StreamBody {
   configId: string;
@@ -17,8 +28,16 @@ interface StreamBody {
   maxTokens?: number;
 }
 
+interface ReconnectParams {
+  jobId: string;
+}
+
 export async function registerAiStreamRoute(app: FastifyInstance) {
+  // ================================================================
+  // POST /api/ai/stream — 主 SSE 流式端点（含后台任务追踪）
+  // ================================================================
   app.post<{ Body: StreamBody }>('/api/ai/stream', async (request, reply) => {
+    let jobId = '';
     try {
       // 鉴权
       const authHeader = request.headers.authorization;
@@ -43,9 +62,14 @@ export async function registerAiStreamRoute(app: FastifyInstance) {
         return reply.status(404).send({ error: 'AI 配置不存在' });
       }
 
+      // 创建后台任务（Redis 可用时）
+      if (isRedisAvailable()) {
+        jobId = await createJob(payload.userId, projectId);
+      }
+
       // 创建适配器
       const apiKey = decryptApiKey(config.apiKey);
-      app.log.info({ provider: config.provider, baseUrl: config.baseUrl, model: config.defaultModel }, 'AI stream request');
+      app.log.info({ provider: config.provider, baseUrl: config.baseUrl, model: config.defaultModel, jobId }, 'AI stream request');
       const adapter = createAdapter(config.provider, {
         apiKey,
         baseUrl: config.baseUrl || undefined,
@@ -58,9 +82,16 @@ export async function registerAiStreamRoute(app: FastifyInstance) {
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
         'X-Accel-Buffering': 'no',
+        'Access-Control-Allow-Origin': request.headers.origin || '*',
+        'Access-Control-Allow-Credentials': 'true',
       });
 
-      // 心跳机制：每 5s 发送一次 SSE comment，保持代理连接活跃
+      // 首条事件：告知 jobId（用于断线重连）
+      if (jobId) {
+        reply.raw.write(`data: ${JSON.stringify({ jobId })}\n\n`);
+      }
+
+      // 心跳机制：每 5s 发送一次 SSE comment
       const heartbeat = setInterval(() => reply.raw.write(': heartbeat\n\n'), 5000);
 
       let totalPromptTokens = 0;
@@ -75,19 +106,32 @@ export async function registerAiStreamRoute(app: FastifyInstance) {
               totalPromptTokens = chunk.usage.promptTokens;
               totalCompletionTokens = chunk.usage.completionTokens;
             }
-            reply.raw.write(`data: ${JSON.stringify({ done: true, usage: chunk.usage })}\n\n`);
+            const event: StreamEvent = { done: true, usage: chunk.usage };
+            reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+            if (jobId) appendEvent(jobId, event).catch(() => {});
           } else {
-            const data: Record<string, unknown> = { content: chunk.content };
-            if (chunk.thinking) data.thinking = chunk.thinking;
-            reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
+            const event: StreamEvent & { thinking?: string } = { content: chunk.content };
+            if (chunk.thinking) event.thinking = chunk.thinking;
+            reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+            if (jobId) appendEvent(jobId, event).catch(() => {});
           }
         }
       } catch (err: unknown) {
         app.log.error({ err }, 'Stream error');
         const msg = err instanceof Error ? err.message : 'AI 调用失败';
-        reply.raw.write(`data: ${JSON.stringify({ error: msg })}\n\n`);
+        const errorEvent: StreamEvent = { error: msg };
+        reply.raw.write(`data: ${JSON.stringify(errorEvent)}\n\n`);
+        if (jobId) {
+          appendEvent(jobId, errorEvent).catch(() => {});
+          failJob(jobId, msg).catch(() => {});
+        }
       } finally {
         clearInterval(heartbeat);
+      }
+
+      // 标记任务完成
+      if (jobId) {
+        completeJob(jobId).catch(() => {});
       }
 
       // 记录用量
@@ -105,9 +149,89 @@ export async function registerAiStreamRoute(app: FastifyInstance) {
 
       reply.raw.end();
     } catch (err: unknown) {
-      // 顶层错误处理 — 在 writeHead 之前捕获的错误
       app.log.error({ err }, 'Route handler error');
       const msg = err instanceof Error ? err.message : '内部错误';
+      return reply.status(500).send({ error: msg });
+    }
+  });
+
+  // ================================================================
+  // GET /api/ai/stream/status/:jobId — 查询任务状态
+  // ================================================================
+  app.get<{ Params: ReconnectParams }>('/api/ai/stream/status/:jobId', async (request, reply) => {
+    try {
+      const meta = await getJobMeta(request.params.jobId);
+      if (!meta) {
+        return reply.status(404).send({ error: '任务不存在或已过期' });
+      }
+      return reply.send({
+        jobId: meta.jobId,
+        status: meta.status,
+        createdAt: meta.createdAt,
+        error: meta.error,
+      });
+    } catch (err: unknown) {
+      app.log.error({ err }, 'Status check error');
+      return reply.status(500).send({ error: '状态查询失败' });
+    }
+  });
+
+  // ================================================================
+  // GET /api/ai/stream/reconnect/:jobId — 断线重连 SSE
+  // ================================================================
+  app.get<{ Params: ReconnectParams }>('/api/ai/stream/reconnect/:jobId', async (request, reply) => {
+    const { jobId } = request.params;
+    try {
+      const meta = await getJobMeta(jobId);
+      if (!meta) {
+        return reply.status(404).send({ error: '任务不存在或已过期' });
+      }
+
+      // SSE headers
+      reply.raw.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+        'Access-Control-Allow-Origin': request.headers.origin || '*',
+        'Access-Control-Allow-Credentials': 'true',
+      });
+
+      // 1. 先回放已存储的事件
+      const pastEvents = await getEvents(jobId);
+      for (const event of pastEvents) {
+        reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+      }
+
+      // 2. 如果任务仍在运行，订阅新事件
+      if (meta.status === 'running') {
+        reply.raw.write(`data: ${JSON.stringify({ jobId, reconnecting: true })}\n\n`);
+
+        const heartbeat = setInterval(() => reply.raw.write(': heartbeat\n\n'), 5000);
+
+        const unsubscribe = await subscribeToJob(jobId, (event: StreamEvent) => {
+          reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+          // done 或 error 时结束重连
+          if (event.done || event.error) {
+            clearInterval(heartbeat);
+            unsubscribe();
+            reply.raw.end();
+          }
+        });
+
+        // 客户端断开时清理
+        request.raw.on('close', () => {
+          clearInterval(heartbeat);
+          unsubscribe();
+        });
+      } else {
+        // 已完成或失败 — 发送结束信号
+        reply.raw.write(`data: ${JSON.stringify({ done: true, replayed: true })}\n\n`);
+        reply.raw.end();
+      }
+    } catch (err: unknown) {
+      app.log.error({ err, jobId }, 'Reconnect error');
+      const msg = err instanceof Error ? err.message : '重连失败';
       return reply.status(500).send({ error: msg });
     }
   });

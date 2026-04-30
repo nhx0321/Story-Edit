@@ -6,7 +6,7 @@ import { trpc } from '@/lib/trpc';
 
 const sections = [
   { href: '/settings/profile', title: '个人信息', desc: '头像、昵称、邮箱、密码' },
-  { href: '/settings/billing', title: '充值与账单', desc: '每日签到、账户充值、我的精灵豆、邀请好友、账单记录' },
+  { href: '/settings/billing', title: '精灵豆与签到', desc: '每日签到、精灵豆余额、余额兑换、邀请好友' },
 ];
 
 export default function SettingsPage() {
@@ -28,7 +28,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <main className="min-h-screen bg-gray-50 p-8">
+    <main className="min-h-screen bg-gray-50 p-8" data-guide-target="settings">
       <div className="max-w-3xl mx-auto">
         <h1 className="text-2xl font-bold mb-8">设置</h1>
 

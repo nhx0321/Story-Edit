@@ -1,5 +1,50 @@
-﻿@import '../styles/sprite-animations.css';
-@tailwind base;
+﻿@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* CTA 按钮脉冲引导 */
+@keyframes cta-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(17, 24, 39, 0.15); }
+  50% { box-shadow: 0 0 0 4px rgba(17, 24, 39, 0.06); }
+}
+
+.animate-cta-pulse {
+  animation: cta-pulse 2.5s ease-in-out infinite;
+}
+
+/* 琥珀色边框闪烁3次（新项目大纲编辑引导） */
+@keyframes amber-flash {
+  0%, 100% { border-color: rgb(229 119 42 / 0); }
+  10%, 30%, 50% { border-color: rgb(245 158 11 / 0.8); box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2); }
+  20%, 40% { border-color: rgb(229 119 42 / 0); box-shadow: none; }
+  60% { border-color: rgb(245 158 11 / 0.8); box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2); }
+  70%, 100% { border-color: rgb(229 119 42 / 0); box-shadow: none; }
+}
+
+.animate-amber-flash {
+  animation: amber-flash 3s ease-in-out 1 forwards;
+}
+
+/* 加粗滚动条（对话框消息区） */
+.scrollbar-thick::-webkit-scrollbar {
+  width: 14px;
+}
+
+.scrollbar-thick::-webkit-scrollbar-track {
+  background: #e5e7eb;
+  border-radius: 0;
+}
+
+.scrollbar-thick::-webkit-scrollbar-thumb {
+  background: #9ca3af;
+  border-radius: 0;
+}
+
+.scrollbar-thick::-webkit-scrollbar-thumb:hover {
+  background: #6b7280;
+}
+
+/* 草稿编辑器首行缩进 */
+.story-editor .tiptap p {
+  text-indent: 2em;
+}

@@ -21,6 +21,8 @@ interface SelfCheckPanelProps {
   onRetry: () => void;
   /** 跳转到修改步骤 */
   onNavigateToModify?: () => void;
+  /** 是否为 thinking/reasoning 模型 */
+  isThinking?: boolean;
 }
 
 // 检查项类型中文映射
@@ -35,7 +37,7 @@ const TYPE_LABELS: Record<string, { label: string; color: string }> = {
 
 export function SelfCheckPanel({
   report, generating, items,
-  onRetry, onNavigateToModify,
+  onRetry, onNavigateToModify, isThinking,
 }: SelfCheckPanelProps) {
   if (generating) {
     return (
@@ -44,7 +46,7 @@ export function SelfCheckPanel({
         <div className="space-y-3">
           <div className="flex items-center gap-2 mb-3">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-            <span className="text-sm text-gray-500">AI正在自检中，thinking模型时间较久，请耐心等待</span>
+            <span className="text-sm text-gray-500">{isThinking ? 'AI将进行详细自检，thinking模型需要一些时间，请耐心等候。您可以根据质量要求选择合适模型。' : 'AI正在思考中，请稍候...'}</span>
           </div>
           <div className="animate-pulse flex items-center gap-3">
             <div className="w-3 h-3 bg-gray-400 rounded-full" />

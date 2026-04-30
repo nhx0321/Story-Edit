@@ -22,6 +22,7 @@ export function TRPCProvider({ children }: { children: React.ReactNode }) {
       links: [
         httpBatchLink({
           url: `${getBaseUrl()}/trpc`,
+          maxURLLength: 2048,
           headers() {
             const token = useAuthStore.getState().token;
             return token ? { Authorization: `Bearer ${token}` } : {};

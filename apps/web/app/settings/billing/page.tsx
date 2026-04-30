@@ -1,9 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { trpc } from '@/lib/trpc';
-import { CUMULATIVE_XP } from '@/lib/sprite-config';
 
 export default function BillingPage() {
   const [inviteCodeInput, setInviteCodeInput] = useState('');
@@ -14,23 +13,28 @@ export default function BillingPage() {
   const [loadingInvite, setLoadingInvite] = useState(false);
 
   const { data: checkinStatus } = trpc.userAccount.getCheckinStatus.useQuery();
-  const { data: transactions } = trpc.userAccount.getTransactions.useQuery({ limit: 20 });
-  const { data: status } = trpc.sprite.getStatus.useQuery();
   const { data: beanData } = trpc.spriteBean.getBalance.useQuery();
-  const { data: levelProgress } = trpc.spriteBean.getLevelProgress.useQuery();
+  const { data: tokenAccount } = trpc.token.getAccount.useQuery();
 
+  const utils = trpc.useUtils();
   const useCodeMutation = trpc.userAccount.useInviteCode.useMutation();
   const checkinMutation = trpc.userAccount.checkin.useMutation();
+  const exchangeToBeansMutation = trpc.spriteBean.exchangeBalanceToBeans.useMutation({
+    onSuccess: () => { utils.spriteBean.getBalance.invalidate(); utils.token.getAccount.invalidate(); },
+  });
+  const exchangeToBalanceMutation = trpc.spriteBean.exchangeBeansToBalance.useMutation({
+    onSuccess: () => { utils.spriteBean.getBalance.invalidate(); utils.token.getAccount.invalidate(); },
+  });
+
+  // 兑换表单
+  const [exchangeYuan, setExchangeYuan] = useState(1);
+  const [exchangeBeans, setExchangeBeans] = useState(1);
 
   const beanBalance = beanData?.beanBalance ?? 0;
   const totalBeanSpent = beanData?.totalBeanSpent ?? 0;
   const totalXp = beanData?.totalXp ?? totalBeanSpent;
-  const convertibleDays = levelProgress?.convertibleDays ?? 0;
-  const s = status as any;
-  const isHatched = s?.isHatched ?? false;
-  const spriteLevel = s?.level ?? 1;
 
-  const fetchInviteCode = async () => {
+  const fetchInviteCode = useCallback(async () => {
     if (profile?.inviteCode) {
       setMyCode(profile.inviteCode);
       return;
@@ -43,19 +47,21 @@ export default function BillingPage() {
       // ignore
     }
     setLoadingInvite(false);
-  };
+  }, [profile?.inviteCode, getInviteCodeMutation]);
 
-  // Auto-fetch invite code
   useEffect(() => {
     if (!myCode && !loadingInvite && profile) {
       fetchInviteCode();
     }
-  }, [myCode, loadingInvite, profile]);
+  }, [myCode, loadingInvite, profile, fetchInviteCode]);
 
   const handleCheckin = async () => {
     try {
       await checkinMutation.mutateAsync();
-      await trpc.useUtils().userAccount.getCheckinStatus.invalidate();
+      await Promise.all([
+        utils.userAccount.getCheckinStatus.invalidate(),
+        utils.spriteBean.getBalance.invalidate(),
+      ]);
     } catch (e: any) {
       alert(e.message || '签到失败');
     }
@@ -68,7 +74,11 @@ export default function BillingPage() {
     }
     try {
       await useCodeMutation.mutateAsync({ code: inviteCodeInput });
-      alert('邀请成功！双方各获得 300 精灵豆');
+      await Promise.all([
+        utils.userAccount.getProfile.invalidate(),
+        utils.spriteBean.getBalance.invalidate(),
+      ]);
+      alert('邀请成功！双方各获得 30 精灵豆');
     } catch (e: any) {
       alert(e.message || '邀请码无效');
     }
@@ -78,7 +88,7 @@ export default function BillingPage() {
     <main className="min-h-screen bg-gray-50 p-8">
       <div className="max-w-3xl mx-auto">
         <Link href="/settings" className="text-sm text-gray-500 hover:text-gray-900">&larr; 返回设置</Link>
-        <h1 className="text-2xl font-bold mt-4 mb-8">充值与账单</h1>
+        <h1 className="text-2xl font-bold mt-4 mb-8">精灵豆与签到</h1>
 
         {/* 1. 每日签到 */}
         {checkinStatus && (
@@ -103,115 +113,106 @@ export default function BillingPage() {
           </div>
         )}
 
-        {/* 2. 账户充值 */}
+        {/* 2. 精灵豆余额 */}
         <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-          <h2 className="font-semibold mb-4">账户充值</h2>
-          <div className="grid grid-cols-3 md:grid-cols-6 gap-3 mb-4">
-            {[
-              { amount: 500, label: '¥5' },
-              { amount: 1000, label: '¥10' },
-              { amount: 3000, label: '¥30' },
-              { amount: 10000, label: '¥100' },
-              { amount: 30000, label: '¥300' },
-            ].map(opt => (
-              <button key={opt.amount}
-                className="py-3 border border-gray-200 rounded-lg text-center hover:border-gray-900 hover:bg-gray-50 transition font-medium"
-              >
-                {opt.label}
-              </button>
-            ))}
+          <h2 className="font-semibold mb-4">精灵豆余额</h2>
+          <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl border border-green-200 p-5">
+            <p className="text-sm text-green-600 mb-1">精灵豆余额</p>
+            <p className="text-3xl font-bold text-green-800">{beanBalance}</p>
+            <p className="text-xs text-green-500 mt-2">累计消耗：{totalBeanSpent} 豆 · 精灵经验：{totalXp}</p>
+            <p className="text-xs text-green-400 mt-1">精灵豆可用于购买模板：1豆查看全文，10豆导入模板</p>
           </div>
-          <div className="flex gap-3">
-            <input type="number" className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900"
-              placeholder="自定义充值金额（元）" />
-            <button className="px-6 py-2 bg-gray-900 text-white rounded-lg font-medium hover:bg-gray-800 transition">
-              立即充值
-            </button>
-          </div>
-          <p className="text-xs text-gray-400 mt-3">充值获得精灵豆，可用于互动消费、道具购买、模板导入等</p>
         </div>
 
-        {/* 3. 我的精灵豆 */}
-        {isHatched && (
-          <>
-            {/* 精灵豆余额 */}
-            <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-xl border border-green-200 p-6 mb-6">
-              <p className="text-sm text-green-600 mb-1">精灵豆余额（充值余额）</p>
-              <p className="text-4xl font-bold text-green-800">{beanBalance}</p>
-              <p className="text-xs text-green-500 mt-2">累计消耗：{totalBeanSpent} 豆 · 精灵经验：{totalXp}</p>
-              <p className="text-xs text-green-400 mt-1">充值比例：1元 = 100豆</p>
+        {/* 2.5 余额与精灵豆兑换 */}
+        <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+          <h2 className="font-semibold mb-4">余额与精灵豆兑换</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* 余额→精灵豆 */}
+            <div className="bg-blue-50 rounded-xl border border-blue-200 p-4">
+              <p className="text-sm font-medium text-blue-800 mb-1">余额 → 精灵豆</p>
+              <p className="text-xs text-blue-600 mb-3">1 元 → 100 精灵豆</p>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xs text-gray-500 shrink-0">兑换金额（元）</span>
+                <input type="number" min={1} max={10000} value={exchangeYuan}
+                  onChange={e => setExchangeYuan(Math.max(1, parseInt(e.target.value) || 1))}
+                  className="w-24 px-2 py-1.5 border border-blue-300 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <p className="text-xs text-gray-500 mb-3">
+                将获得 <span className="font-bold text-blue-700">{exchangeYuan * 100}</span> 精灵豆，
+                扣除余额 <span className="font-bold">{exchangeYuan}</span> 元
+                {tokenAccount ? <span className="text-gray-400">（当前余额 ¥{((tokenAccount.balance ?? 0) / 10_000_000).toFixed(2)}）</span> : null}
+              </p>
+              <button
+                onClick={async () => {
+                  if (!confirm(`确认用 ${exchangeYuan} 元余额兑换 ${exchangeYuan * 100} 精灵豆？`)) return;
+                  try {
+                    const res = await exchangeToBeansMutation.mutateAsync({ amountYuan: exchangeYuan });
+                    alert(`兑换成功！获得 ${res.beanAmount} 精灵豆`);
+                  } catch (e: any) { alert(e.message || '兑换失败'); }
+                }}
+                disabled={exchangeToBeansMutation.isPending}
+                className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition disabled:opacity-50">
+                {exchangeToBeansMutation.isPending ? '兑换中...' : '余额兑换精灵豆'}
+              </button>
             </div>
 
-            {/* VIP 兑换提示 */}
-            {convertibleDays > 0 && (
-              <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl border border-purple-200 p-6 mb-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-purple-600 mb-1">可兑换 VIP 时长</p>
-                    <p className="text-3xl font-bold text-purple-800">{convertibleDays} 天</p>
-                  </div>
-                  <Link href="/sprite-shop"
-                    className="px-6 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition">
-                    前往兑换
-                  </Link>
-                </div>
+            {/* 精灵豆→余额 */}
+            <div className="bg-amber-50 rounded-xl border border-amber-200 p-4">
+              <p className="text-sm font-medium text-amber-800 mb-1">精灵豆 → 余额</p>
+              <p className="text-xs text-amber-600 mb-3">100 精灵豆 → 1 元</p>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xs text-gray-500 shrink-0">兑换精灵豆数量</span>
+                <input type="number" min={1} step={1} value={exchangeBeans}
+                  onChange={e => setExchangeBeans(Math.max(1, parseInt(e.target.value) || 1))}
+                  className="w-24 px-2 py-1.5 border border-amber-300 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-amber-500" />
               </div>
-            )}
-
-            {/* 升级进度 */}
-            {levelProgress && !levelProgress.maxLevel && (
-              <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-                <h2 className="font-semibold mb-4">升级经验（L{spriteLevel} → L{spriteLevel + 1}）</h2>
-                <div>
-                  <div className="flex items-center justify-between text-sm mb-1">
-                    <span>经验值进度</span>
-                    <span className="text-gray-500">{levelProgress.xpProgress}</span>
-                  </div>
-                  <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-blue-500 rounded-full transition-all"
-                      style={{ width: `${getXpPercent(levelProgress.xpProgress)}%` }}
-                    />
-                  </div>
-                  <p className="text-xs text-gray-400 mt-1">还需 {levelProgress.xpNeeded} 经验</p>
-                </div>
-              </div>
-            )}
-
-            {levelProgress?.maxLevel && (
-              <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6 text-center">
-                <p className="text-lg font-semibold">🎉 已达最高等级 L9！</p>
-                <p className="text-sm text-gray-500 mt-1">恭喜你的精灵已完全成长</p>
-              </div>
-            )}
-
-            {/* 获取精灵豆 */}
-            <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-              <h2 className="font-semibold mb-4">如何获取精灵豆</h2>
-              <div className="space-y-2 text-sm text-gray-600">
-                <div className="flex items-center justify-between py-2 border-b border-gray-50">
-                  <span>🎯 新手引导完成</span>
-                  <span className="font-medium text-green-600">+100 豆</span>
-                </div>
-                <div className="flex items-center justify-between py-2 border-b border-gray-50">
-                  <span>📅 每日签到</span>
-                  <span className="font-medium text-green-600">+10 豆</span>
-                </div>
-                <div className="flex items-center justify-between py-2 border-b border-gray-50">
-                  <span>👥 邀请好友</span>
-                  <span className="font-medium text-green-600">+300 豆</span>
-                </div>
-                <div className="flex items-center justify-between py-2">
-                  <span>💰 充值（1元 = 100豆）</span>
-                  <span className="font-medium text-green-600">按需充值</span>
-                </div>
-              </div>
+              <p className="text-xs text-gray-500 mb-3">
+                将获得余额 <span className="font-bold text-amber-700">{(exchangeBeans / 100).toFixed(2)}</span> 元，
+                扣除 <span className="font-bold">{exchangeBeans}</span> 精灵豆
+                <span className="text-gray-400">（当前 {beanBalance} 豆）</span>
+              </p>
+              <button
+                onClick={async () => {
+                  if (!confirm(`确认用 ${exchangeBeans} 精灵豆兑换 ${(exchangeBeans / 100).toFixed(2)} 元余额？`)) return;
+                  try {
+                    await exchangeToBalanceMutation.mutateAsync({ beanAmount: exchangeBeans });
+                    alert(`兑换成功！获得余额 ${(exchangeBeans / 100).toFixed(2)} 元`);
+                  } catch (e: any) { alert(e.message || '兑换失败'); }
+                }}
+                disabled={exchangeToBalanceMutation.isPending}
+                className="w-full py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition disabled:opacity-50">
+                {exchangeToBalanceMutation.isPending ? '兑换中...' : '精灵豆兑换余额'}
+              </button>
             </div>
-          </>
-        )}
+          </div>
+        </div>
+
+        {/* 3. 如何获取精灵豆 */}
+        <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+          <h2 className="font-semibold mb-4">如何获取精灵豆</h2>
+          <div className="space-y-2 text-sm text-gray-600">
+            <div className="flex items-center justify-between py-2 border-b border-gray-50">
+              <span>🎯 新手引导完成</span>
+              <span className="font-medium text-green-600">+100 豆</span>
+            </div>
+            <div className="flex items-center justify-between py-2 border-b border-gray-50">
+              <span>📅 每日签到</span>
+              <span className="font-medium text-green-600">+10 豆</span>
+            </div>
+            <div className="flex items-center justify-between py-2 border-b border-gray-50">
+              <span>👥 邀请好友</span>
+              <span className="font-medium text-green-600">+30 豆</span>
+            </div>
+            <div className="flex items-center justify-between py-2">
+              <span>🔄 余额兑换（1元 = 100豆）</span>
+              <span className="font-medium text-green-600">按需兑换</span>
+            </div>
+          </div>
+        </div>
 
         {/* 4. 邀请好友 */}
-        <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+        <div className="bg-white rounded-xl border border-gray-200 p-6">
           <h2 className="font-semibold mb-4">邀请好友</h2>
           <div className="space-y-4">
             <div className="flex items-center gap-3">
@@ -223,9 +224,8 @@ export default function BillingPage() {
                 复制
               </button>
             </div>
-            <p className="text-xs text-gray-500">你和好友各可获得 300 精灵豆</p>
+            <p className="text-xs text-gray-500">你和好友各可获得 30 精灵豆</p>
 
-            {/* 填写邀请码 */}
             <div className="border-t border-gray-100 pt-4">
               <p className="text-sm font-medium text-gray-700 mb-2">填写邀请码</p>
               <div className="flex gap-3">
@@ -241,38 +241,7 @@ export default function BillingPage() {
             </div>
           </div>
         </div>
-
-        {/* 5. 账单记录 */}
-        <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="font-semibold mb-4">账单记录</h2>
-          {transactions && transactions.length > 0 ? (
-            <div className="space-y-2">
-              {transactions.map(t => (
-                <div key={t.id} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
-                  <div>
-                    <p className="text-sm">{t.description || t.type}</p>
-                    <p className="text-xs text-gray-400">{new Date(t.createdAt).toLocaleDateString('zh-CN')}</p>
-                  </div>
-                  <span className={`text-sm font-medium ${t.amount >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {t.amount >= 0 ? '+' : ''}{(t.amount / 100).toFixed(2)} 元
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-gray-400 text-center py-8">暂无账单记录</p>
-          )}
-        </div>
       </div>
     </main>
   );
-}
-
-function getXpPercent(progress: string): number {
-  const parts = progress.split('/');
-  if (parts.length !== 2) return 0;
-  const current = parseInt(parts[0]);
-  const total = parseInt(parts[1]);
-  if (total === 0) return 0;
-  return Math.min(100, (current / total) * 100);
 }

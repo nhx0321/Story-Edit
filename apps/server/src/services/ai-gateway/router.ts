@@ -1,6 +1,6 @@
 // AI 配置管理 + 网关 tRPC 路由
 import { z } from 'zod';
-import { eq, and, desc, sql, gte } from 'drizzle-orm';
+import { eq, and, desc, sql, gte, ne } from 'drizzle-orm';
 import { TRPCError } from '@trpc/server';
 import { router, protectedProcedure } from '../../trpc';
 import { db } from '../../db';
@@ -9,6 +9,17 @@ import { encryptApiKey, decryptApiKey } from './crypto';
 import { createAdapter } from '@story-edit/ai-adapters';
 import type { AIMessage } from '@story-edit/ai-adapters';
 
+async function setUserDefaultConfig(tx: Pick<typeof db, 'update'>, userId: string, configId?: string) {
+  await tx.update(aiConfigs)
+    .set({ isDefault: false })
+    .where(and(eq(aiConfigs.userId, userId), eq(aiConfigs.isDefault, true), configId ? ne(aiConfigs.id, configId) : sql`true`));
+
+  if (configId) {
+    await tx.update(aiConfigs)
+      .set({ isDefault: true })
+      .where(and(eq(aiConfigs.id, configId), eq(aiConfigs.userId, userId)));
+  }
+}
 
 export const aiRouter = router({
   // 保存 AI 配置
@@ -19,18 +30,31 @@ export const aiRouter = router({
       apiKey: z.string().min(1),
       baseUrl: z.string().optional(),
       defaultModel: z.string().optional(),
+      isDefault: z.boolean().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       const encrypted = encryptApiKey(input.apiKey);
-      const [config] = await db.insert(aiConfigs).values({
-        userId: ctx.userId,
-        provider: input.provider,
-        name: input.name,
-        apiKey: encrypted,
-        baseUrl: input.baseUrl,
-        defaultModel: input.defaultModel,
-      }).returning();
-      return { id: config!.id, provider: config!.provider, name: config!.name };
+      const shouldSetDefault = input.isDefault ?? false;
+
+      const config = await db.transaction(async (tx) => {
+        if (shouldSetDefault) {
+          await setUserDefaultConfig(tx, ctx.userId);
+        }
+
+        const [inserted] = await tx.insert(aiConfigs).values({
+          userId: ctx.userId,
+          provider: input.provider,
+          name: input.name,
+          apiKey: encrypted,
+          baseUrl: input.baseUrl,
+          defaultModel: input.defaultModel,
+          isDefault: shouldSetDefault,
+        }).returning();
+
+        return inserted;
+      });
+
+      return { id: config!.id, provider: config!.provider, name: config!.name, isDefault: config!.isDefault };
     }),
 
   // 获取用户所有 AI 配置（不返回明文 key）
@@ -41,11 +65,42 @@ export const aiRouter = router({
       name: aiConfigs.name,
       baseUrl: aiConfigs.baseUrl,
       defaultModel: aiConfigs.defaultModel,
+      isDefault: aiConfigs.isDefault,
       isActive: aiConfigs.isActive,
       createdAt: aiConfigs.createdAt,
     }).from(aiConfigs).where(eq(aiConfigs.userId, ctx.userId));
     return configs;
   }),
+
+  // 更新已有 AI 配置
+  updateConfig: protectedProcedure
+    .input(z.object({
+      id: z.string().uuid(),
+      apiKey: z.string().optional(),
+      baseUrl: z.string().optional(),
+      defaultModel: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const updates: Partial<typeof aiConfigs.$inferInsert> = {};
+      if (input.apiKey) updates.apiKey = encryptApiKey(input.apiKey);
+      if (input.baseUrl !== undefined) updates.baseUrl = input.baseUrl;
+      if (input.defaultModel !== undefined) updates.defaultModel = input.defaultModel;
+      if (Object.keys(updates).length === 0) return { ok: true };
+      await db.update(aiConfigs).set(updates)
+        .where(and(eq(aiConfigs.id, input.id), eq(aiConfigs.userId, ctx.userId)));
+      return { ok: true };
+    }),
+
+  // 设置默认 AI 配置
+  setDefaultConfig: protectedProcedure
+    .input(z.object({ configId: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      await db.transaction(async (tx) => {
+        await setUserDefaultConfig(tx, ctx.userId, input.configId);
+      });
+
+      return { ok: true };
+    }),
 
   // 删除 AI 配置
   deleteConfig: protectedProcedure

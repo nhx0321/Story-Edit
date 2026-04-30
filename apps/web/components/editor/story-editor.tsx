@@ -4,6 +4,28 @@ import { useEffect } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
+import { Mark } from '@tiptap/core';
+
+// 自定义修改高亮 Mark，用于保存 mod-highlight span
+const ModHighlight = Mark.create({
+  name: 'modHighlight',
+  priority: 1000,
+  keepOnSplit: false,
+
+  addAttributes() {
+    return {
+      class: { default: 'mod-highlight' },
+    };
+  },
+
+  parseHTML() {
+    return [{ tag: 'span.mod-highlight' }];
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ['span', HTMLAttributes, 0];
+  },
+});
 
 interface EditorProps {
   content?: string;
@@ -20,6 +42,7 @@ export function StoryEditor({ content = '', onChange, placeholder = '开始创�
         heading: { levels: [1, 2, 3] },
       }),
       Placeholder.configure({ placeholder }),
+      ModHighlight,
     ],
     content,
     editable,
@@ -101,7 +124,7 @@ export function StoryEditor({ content = '', onChange, placeholder = '开始创�
             ↪
           </ToolbarButton>
           <div className="flex-1" />
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-gray-400 shrink-0 whitespace-nowrap">
             {editor.getText().length} 字
           </span>
         </div>

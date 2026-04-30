@@ -47,7 +47,7 @@ export default function RegisterPage() {
               value={form.email}
               onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900"
-              placeholder="[email]"
+              placeholder="输入邮箱地址"
             />
           </div>
           <div>
@@ -85,6 +85,9 @@ export default function RegisterPage() {
 
         <p className="text-sm text-gray-500 text-center mt-6">
           已有账号？<a href="/login" className="text-gray-900 font-medium hover:underline">登录</a>
+        </p>
+        <p className="text-xs text-gray-400 text-center mt-3">
+          注册即表示同意 <a href="/terms" className="text-gray-500 hover:text-gray-900 underline">用户协议与免责声明</a>
         </p>
       </div>
     </main>
