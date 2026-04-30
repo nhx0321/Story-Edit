@@ -4,11 +4,13 @@ import { useState } from 'react';
 import Image from 'next/image';
 import { trpc } from '@/lib/trpc';
 
+// 固定充值档位 — 每个档位对应一张固定金额收款码
+// 图片命名规则: /recharge/wechat_10.jpg, /recharge/alipay_50.jpg
 const RECHARGE_OPTIONS = [
   { yuan: 10, label: '10元' },
   { yuan: 50, label: '50元' },
   { yuan: 100, label: '100元' },
-  { yuan: 500, label: '500元' },
+  { yuan: 300, label: '300元' },
 ];
 
 export default function AIConfigRechargePage() {
@@ -20,7 +22,6 @@ export default function AIConfigRechargePage() {
   const rechargeEnabled = rechargeSetting?.value !== 'false';
 
   const [selectedYuan, setSelectedYuan] = useState<number | null>(null);
-  const [customYuan, setCustomYuan] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'wechat' | 'alipay'>('wechat');
   const [showPayment, setShowPayment] = useState(false);
   const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
@@ -145,41 +146,12 @@ export default function AIConfigRechargePage() {
         {RECHARGE_OPTIONS.map(opt => (
           <button
             key={opt.yuan}
-            onClick={() => { setCustomYuan(''); handleBuy(opt.yuan); }}
+            onClick={() => handleBuy(opt.yuan)}
             className="bg-white rounded-xl border-2 border-gray-200 p-5 text-center hover:border-gray-900 transition"
           >
             <p className="text-2xl font-bold text-gray-900">¥{opt.yuan}</p>
           </button>
         ))}
-      </div>
-
-      {/* 自定义充值 */}
-      <div className="bg-white rounded-xl border border-gray-200 p-5 mb-8">
-        <p className="text-sm font-medium text-gray-700 mb-2">自定义金额</p>
-        <div className="flex gap-3 items-center">
-          <div className="relative flex-1">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 font-medium">¥</span>
-            <input
-              type="number"
-              min="1"
-              step="1"
-              value={customYuan}
-              onChange={e => setCustomYuan(e.target.value)}
-              className="w-full pl-8 pr-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-900"
-              placeholder="输入充值金额（整数）"
-            />
-          </div>
-          <button
-            onClick={() => {
-              const v = parseInt(customYuan);
-              if (v && v > 0) handleBuy(v);
-            }}
-            disabled={!parseInt(customYuan) || parseInt(customYuan) <= 0}
-            className="px-6 py-2.5 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition disabled:opacity-50 shrink-0"
-          >
-            充值
-          </button>
-        </div>
       </div>
       </>
       )}
@@ -304,15 +276,15 @@ export default function AIConfigRechargePage() {
                 <div className="flex justify-center mb-4">
                   <div className="border-2 border-gray-200 rounded-xl p-3 bg-white">
                     <Image
-                      src={paymentMethod === 'wechat' ? '/recharge/wechat.jpg' : '/recharge/alipay.jpg'}
-                      alt={`${paymentMethod === 'wechat' ? '微信' : '支付宝'}收款码`}
+                      src={`/recharge/${paymentMethod}_${selectedYuan}.jpg`}
+                      alt={`${paymentMethod === 'wechat' ? '微信' : '支付宝'}收款码 ¥${selectedYuan}`}
                       width={240} height={240} className="rounded-lg"
                     />
                   </div>
                 </div>
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
                   <p className="text-xs text-amber-700">
-                    支付功能正在接入中，当前为手动确认模式。扫码支付后请点击下方按钮确认，或联系管理员手动充值。
+                    请使用{paymentMethod === 'wechat' ? '微信' : '支付宝'}扫描上方固定金额收款码完成支付（金额 ¥{selectedYuan}），支付完成后点击下方按钮确认。
                   </p>
                 </div>
                 <button onClick={handleConfirmPayment}

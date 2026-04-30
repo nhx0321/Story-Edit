@@ -174,10 +174,12 @@ export const tokenRelayRouter = router({
       return { orderId: order.id, amountCents: order.amountCents };
     }),
 
-  // 自定义金额充值订单
+  // 固定档位充值订单（仅允许预设金额）
   createCustomRechargeOrder: protectedProcedure
     .input(z.object({
-      amountYuan: z.number().int().min(1),
+      amountYuan: z.number().int().refine(v => [10, 50, 100, 300].includes(v), {
+        message: '仅支持 10/50/100/300 元固定档位充值',
+      }),
       paymentMethod: z.enum(['wechat', 'alipay']),
     }))
     .mutation(async ({ ctx, input }) => {
@@ -195,7 +197,7 @@ export const tokenRelayRouter = router({
       return { orderId: order.id, amountCents: order.amountCents };
     }),
 
-  // 确认支付（手动确认，用户扫码后点击"我已支付"）
+  // 确认支付（固定金额收款码，金额由码本身保证）
   confirmRechargePayment: protectedProcedure
     .input(z.object({ orderId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
@@ -249,7 +251,6 @@ export const tokenRelayRouter = router({
           ));
 
         if (existingSub?.expiresAt && existingSub.expiresAt > now) {
-          // 续费延长
           const newExpiry = new Date(existingSub.expiresAt);
           newExpiry.setDate(newExpiry.getDate() + pkg.durationDays);
           await db.update(userSubscriptions)
