@@ -17,6 +17,7 @@ import { feedbackRouter } from './services/feedback/router';
 import { tokenRelayRouter } from './services/token-relay/router';
 import { migrationRouter } from './services/migration/router';
 import { analysisRouter } from './services/analysis/router';
+import { videoBackgroundRouter } from './services/video-background/router';
 
 export const appRouter = router({
   health: publicProcedure.query(() => ({
@@ -42,6 +43,7 @@ export const appRouter = router({
   token: tokenRelayRouter,
   migration: migrationRouter,
   analysis: analysisRouter,
+  videoBackground: videoBackgroundRouter,
 });
 
 export type AppRouter = typeof appRouter;

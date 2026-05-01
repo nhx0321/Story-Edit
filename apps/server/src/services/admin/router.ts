@@ -6,7 +6,7 @@ import { router, adminProcedure, adminProcedureLevel, protectedProcedure } from 
 import { db } from '../../db';
 import {
   users, subscriptions, adminAuditLogs, systemPresets, artAssets, userSprites, userTokenAccounts,
-  genrePresets,
+  genrePresets, videoBackgrounds,
 } from '../../db/schema';
 import * as artAssetService from './art-assets';
 import { recordBeanTransaction } from '../sprite/bean-service';
@@ -1347,6 +1347,92 @@ export const adminRouter = router({
         targetType: 'genre_preset',
         targetId: input.id,
         details: { genre: existing.genre, agentRole: existing.agentRole },
+      });
+
+      return { ok: true };
+    }),
+
+  // ========== 视频背景管理 ==========
+
+  listVideoBackgrounds: adminProcedure
+    .query(async () => {
+      return db.select().from(videoBackgrounds).orderBy(videoBackgrounds.sortOrder);
+    }),
+
+  createVideoBackground: adminProcedure
+    .input(z.object({
+      name: z.string().min(1).max(100),
+      fileName: z.string().min(1),
+      description: z.string().optional(),
+      hasAudio: z.boolean().default(true),
+      sortOrder: z.number().default(0),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const [bg] = await db.insert(videoBackgrounds).values({
+        name: input.name,
+        fileName: input.fileName,
+        description: input.description || null,
+        hasAudio: input.hasAudio,
+        sortOrder: input.sortOrder,
+      }).returning();
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel: (ctx as any).adminLevel,
+        action: 'create_video_background',
+        targetType: 'video_background',
+        targetId: bg.id,
+        details: { name: input.name, fileName: input.fileName },
+      });
+
+      return bg;
+    }),
+
+  updateVideoBackground: adminProcedure
+    .input(z.object({
+      id: z.string().uuid(),
+      name: z.string().min(1).max(100).optional(),
+      description: z.string().nullable().optional(),
+      hasAudio: z.boolean().optional(),
+      sortOrder: z.number().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const { id, ...updates } = input;
+      const [existing] = await db.select().from(videoBackgrounds).where(eq(videoBackgrounds.id, id));
+      if (!existing) throw new TRPCError({ code: 'NOT_FOUND', message: '背景不存在' });
+
+      const [bg] = await db.update(videoBackgrounds)
+        .set({ ...updates, updatedAt: new Date() })
+        .where(eq(videoBackgrounds.id, id))
+        .returning();
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel: (ctx as any).adminLevel,
+        action: 'update_video_background',
+        targetType: 'video_background',
+        targetId: id,
+      });
+
+      return bg;
+    }),
+
+  deleteVideoBackground: adminProcedure
+    .input(z.object({ id: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const [existing] = await db.select().from(videoBackgrounds).where(eq(videoBackgrounds.id, input.id));
+      if (!existing) throw new TRPCError({ code: 'NOT_FOUND', message: '背景不存在' });
+
+      await db.update(videoBackgrounds)
+        .set({ isActive: false, updatedAt: new Date() })
+        .where(eq(videoBackgrounds.id, input.id));
+
+      await logAudit({
+        adminId: ctx.userId,
+        adminLevel: (ctx as any).adminLevel,
+        action: 'delete_video_background',
+        targetType: 'video_background',
+        targetId: input.id,
       });
 
       return { ok: true };

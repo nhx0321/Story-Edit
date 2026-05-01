@@ -1048,3 +1048,17 @@ export const userGroups = pgTable('user_groups', {
   sortOrder: integer('sort_order').default(0),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
+
+// ========== 视频背景 ==========
+
+export const videoBackgrounds = pgTable('video_backgrounds', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 100 }).notNull(),
+  fileName: text('file_name').notNull(),
+  description: text('description'),
+  hasAudio: boolean('has_audio').default(true),
+  isActive: boolean('is_active').default(true),
+  sortOrder: integer('sort_order').default(0),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});

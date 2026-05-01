@@ -48,3 +48,13 @@
 .story-editor .tiptap p {
   text-indent: 2em;
 }
+
+/* 视频背景激活时的毛玻璃效果 */
+body.video-bg-active .bg-white {
+  background-color: rgba(255, 255, 255, 0.7) !important;
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+}
+body.video-bg-active .bg-gray-50 {
+  background-color: transparent !important;
+}

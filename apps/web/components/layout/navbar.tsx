@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import { useAuthStore } from '@/lib/auth-store';
 import { trpc } from '@/lib/trpc';
 import { FeedbackDialog } from '@/components/feedback-dialog';
+import { BackgroundSwitcher, MusicToggle } from '@/components/layout/background-controls';
 
 function NavItems({ pathname, mounted, isAdmin, latestProjectId }: { pathname: string; mounted: boolean; isAdmin: boolean; latestProjectId?: string }) {
   // 如果在 /project/[id] 路径下，指向当前项目概览页
@@ -106,8 +107,10 @@ export function Navbar() {
             </div>
           </div>
 
-          {/* Right: Account */}
+          {/* Right: Background controls + Account */}
           <div className="flex items-center gap-3">
+            <MusicToggle />
+            <BackgroundSwitcher />
             {/* Account */}
             <div className="relative" ref={ref}>
               <button onClick={() => setAccountOpen(!accountOpen)}

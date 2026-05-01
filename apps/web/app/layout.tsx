@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { TRPCProvider } from '@/lib/trpc-provider';
 import { Navbar } from '@/components/layout/navbar';
+import { VideoBackground } from '@/components/layout/video-background';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -17,8 +18,11 @@ export default function RootLayout({
     <html lang="zh-CN">
       <body>
         <TRPCProvider>
-          <Navbar />
-          {children}
+          <VideoBackground />
+          <div className="relative z-10">
+            <Navbar />
+            {children}
+          </div>
         </TRPCProvider>
       </body>
     </html>
