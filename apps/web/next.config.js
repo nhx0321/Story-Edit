@@ -3,7 +3,7 @@ const path = require('path');
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   ...(process.env.STANDALONE === '1' ? { output: 'standalone' } : {}),
-  transpilePackages: ['@story-editor/shared', '@story-editor/ui'],
+  transpilePackages: ['@story-edit/shared', '@story-edit/ui'],
   turbopack: {
     root: path.resolve(__dirname, '../..'),
   },
