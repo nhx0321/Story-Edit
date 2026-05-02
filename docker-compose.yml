@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:16-alpine
@@ -41,6 +39,8 @@ services:
     restart: unless-stopped
     ports:
       - '3001:3001'
+    volumes:
+      - /opt/story-edit/uploads/backgrounds:/app/public/backgrounds
     environment:
       NODE_ENV: production
       SERVER_PORT: '3001'
