@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useState } from 'react';
 import { trpc } from '@/lib/trpc';
 
@@ -277,6 +278,12 @@ export default function AdminPresetsPage() {
             {label}
           </button>
         ))}
+        <Link
+          href="/admin/backgrounds"
+          className="px-4 py-2 text-sm rounded-lg font-medium transition bg-white border text-gray-600 hover:border-gray-400"
+        >
+          背景管理
+        </Link>
       </div>
 
       {/* 项目类型 + 题材筛选 */}

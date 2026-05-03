@@ -5,14 +5,16 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { trpc } from '@/lib/trpc';
 import { NotificationBell } from '@/components/notification-bell';
+import { useAuthStore } from '@/lib/auth-store';
 import { projectTypes, categoryData } from '@/lib/project-presets';
 import { aiRolePresets, defaultRoles, getDefaultPrompts } from '@/lib/project-role-presets';
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { data: projects, isLoading } = trpc.project.list.useQuery();
-  const { data: deletedProjects } = trpc.project.listDeleted.useQuery();
-  const { data: tokenAccount } = trpc.token.getAccount.useQuery();
+  const user = useAuthStore(s => s.user);
+  const { data: projects, isLoading } = trpc.project.list.useQuery(undefined, { enabled: !!user });
+  const { data: deletedProjects } = trpc.project.listDeleted.useQuery(undefined, { enabled: !!user });
+  const { data: tokenAccount } = trpc.token.getAccount.useQuery(undefined, { enabled: !!user });
   const [form, setForm] = useState({ name: '', type: 'webnovel', category: '', genre: '' });
   const [error, setError] = useState('');
 

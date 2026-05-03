@@ -58,3 +58,16 @@ body.video-bg-active .bg-white {
 body.video-bg-active .bg-gray-50 {
   background-color: transparent !important;
 }
+
+/* 全站浅灰字体加深 */
+.text-gray-400 {
+  color: rgb(75 85 99) !important;
+}
+
+.text-gray-500 {
+  color: rgb(55 65 81) !important;
+}
+
+.text-gray-600 {
+  color: rgb(31 41 55) !important;
+}

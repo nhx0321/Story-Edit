@@ -10,13 +10,30 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const router = useRouter();
   const setAuth = useAuthStore((s) => s.setAuth);
+  const registerMutation = trpc.auth.register.useMutation();
 
   const loginMutation = trpc.auth.login.useMutation({
     onSuccess: (data) => {
       setAuth(data.token, data.user);
       router.push('/dashboard');
     },
-    onError: (err) => setError(err.message),
+    onError: async (err) => {
+      if (err.message !== '账号不存在') {
+        setError(err.message);
+        return;
+      }
+
+      try {
+        const registerInput = form.account.includes('@')
+          ? { email: form.account, password: form.password }
+          : { phone: form.account, password: form.password };
+        const data = await registerMutation.mutateAsync(registerInput);
+        setAuth(data.token, data.user);
+        router.push('/dashboard');
+      } catch (registerErr) {
+        setError(registerErr instanceof Error ? registerErr.message : '自动注册失败');
+      }
+    },
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -61,10 +78,10 @@ export default function LoginPage() {
           </div>
           <button
             type="submit"
-            disabled={loginMutation.isLoading}
+            disabled={loginMutation.isPending || registerMutation.isPending}
             className="w-full py-3 bg-gray-900 text-white rounded-lg font-medium hover:bg-gray-800 transition disabled:opacity-50"
           >
-            {loginMutation.isLoading ? '登录中...' : '登录'}
+            {loginMutation.isPending || registerMutation.isPending ? '登录中...' : '登录'}
           </button>
         </form>
 

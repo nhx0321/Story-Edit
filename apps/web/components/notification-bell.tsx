@@ -2,15 +2,18 @@
 
 import { useState } from 'react';
 import { trpc } from '@/lib/trpc';
+import { useAuthStore } from '@/lib/auth-store';
 
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
+  const user = useAuthStore(s => s.user);
   const utils = trpc.useUtils();
   const { data: unreadCount = 0 } = trpc.feedback.unreadCount.useQuery(undefined, {
-    refetchInterval: 30000,
+    enabled: !!user,
+    refetchInterval: user ? 30000 : false,
   });
   const { data: notifications = [] } = trpc.feedback.notifications.useQuery(
-    { limit: 10 }, { enabled: open },
+    { limit: 10 }, { enabled: open && !!user },
   );
   const markRead = trpc.feedback.markRead.useMutation({
     onSuccess: () => utils.feedback.unreadCount.invalidate(),

@@ -15,7 +15,6 @@ const navItems: Array<{ href: string; label: string; level: number | null; separ
   { href: '/admin/revenue', label: '营收仪表盘', level: 0, separator: true },
   { href: '/admin/pricing', label: '模型定价', level: 0 },
   { href: '/admin/channels', label: '渠道管理', level: 0 },
-  { href: '/admin/backgrounds', label: '背景管理', level: 0 },
   { href: '/admin/migration', label: '历史迁移', level: 0 },
 ];
 

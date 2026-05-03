@@ -9,7 +9,7 @@ export function BackgroundSwitcher() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const user = useAuthStore(s => s.user);
-  const { activeBackgroundId, setBackground } = useBackgroundStore();
+  const { activeBackgroundId, activeFileName, setBackground } = useBackgroundStore();
   const { data: backgrounds } = trpc.videoBackground.list.useQuery(undefined, { enabled: !!user });
 
   useEffect(() => {
@@ -21,6 +21,14 @@ export function BackgroundSwitcher() {
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
+
+  useEffect(() => {
+    if (!backgrounds || !activeFileName) return;
+    const exists = backgrounds.some(bg => bg.fileName === activeFileName);
+    if (!exists) {
+      setBackground(null, null);
+    }
+  }, [backgrounds, activeFileName, setBackground]);
 
   if (!backgrounds || backgrounds.length === 0) return null;
 

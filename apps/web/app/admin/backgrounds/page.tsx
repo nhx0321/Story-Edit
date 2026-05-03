@@ -45,6 +45,7 @@ export default function AdminBackgroundsPage() {
       updateMutation.mutate({
         id: editId,
         name: form.name,
+        fileName: form.fileName,
         description: form.description || null,
         hasAudio: form.hasAudio,
         sortOrder: form.sortOrder,
@@ -90,9 +91,9 @@ export default function AdminBackgroundsPage() {
             </div>
             <div>
               <label className="block text-sm text-gray-600 mb-1">文件名</label>
-              <input type="text" required value={form.fileName} disabled={!!editId}
+              <input type="text" required value={form.fileName}
                 onChange={e => setForm({ ...form, fileName: e.target.value })}
-                className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm disabled:bg-gray-100"
+                className="w-full px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
                 placeholder="如：forest-rain.mp4" />
             </div>
           </div>
@@ -164,8 +165,8 @@ export default function AdminBackgroundsPage() {
                   <td className="px-4 py-2.5 text-right space-x-2">
                     <button onClick={() => handleEdit(bg)}
                       className="text-blue-600 hover:text-blue-800 text-xs">编辑</button>
-                    <button onClick={() => { if (confirm('确定禁用此背景？')) deleteMutation.mutate({ id: bg.id }); }}
-                      className="text-red-600 hover:text-red-800 text-xs">禁用</button>
+                    <button onClick={() => { if (confirm('确定删除此背景记录？')) deleteMutation.mutate({ id: bg.id }); }}
+                      className="text-red-600 hover:text-red-800 text-xs">删除</button>
                   </td>
                 </tr>
               ))}

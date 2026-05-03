@@ -1392,6 +1392,7 @@ export const adminRouter = router({
     .input(z.object({
       id: z.string().uuid(),
       name: z.string().min(1).max(100).optional(),
+      fileName: z.string().min(1).optional(),
       description: z.string().nullable().optional(),
       hasAudio: z.boolean().optional(),
       sortOrder: z.number().optional(),
@@ -1423,8 +1424,7 @@ export const adminRouter = router({
       const [existing] = await db.select().from(videoBackgrounds).where(eq(videoBackgrounds.id, input.id));
       if (!existing) throw new TRPCError({ code: 'NOT_FOUND', message: '背景不存在' });
 
-      await db.update(videoBackgrounds)
-        .set({ isActive: false, updatedAt: new Date() })
+      await db.delete(videoBackgrounds)
         .where(eq(videoBackgrounds.id, input.id));
 
       await logAudit({
