@@ -21,9 +21,16 @@ export interface StreamChunk {
   replayed?: boolean;
 }
 
+function getBackendBaseUrl() {
+  return process.env.NEXT_PUBLIC_BACKEND_URL
+    || process.env.NEXT_PUBLIC_API_URL
+    || process.env.SERVER_URL
+    || 'http://127.0.0.1:3001';
+}
+
 export async function* streamAiChat(options: StreamOptions): AsyncGenerator<StreamChunk> {
   const token = useAuthStore.getState().token;
-  const baseUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+  const baseUrl = getBackendBaseUrl();
 
   // 前端超时控制（180s，与平台模式保持一致）
   const controller = new AbortController();
@@ -67,7 +74,7 @@ export async function* streamAiChat(options: StreamOptions): AsyncGenerator<Stre
 /** 断线重连：回放已生成的事件 + 订阅新事件 */
 export async function* streamReconnect(jobId: string): AsyncGenerator<StreamChunk> {
   const token = useAuthStore.getState().token;
-  const baseUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+  const baseUrl = getBackendBaseUrl();
 
   let res: Response;
   try {
@@ -104,7 +111,7 @@ export interface PlatformStreamOptions {
 export async function* streamPlatformAiChat(options: PlatformStreamOptions): AsyncGenerator<StreamChunk> {
   const token = useAuthStore.getState().token;
   // 直连后端服务器，完全绕过 Next.js（rewrite 有 30s 代理超时）
-  const baseUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+  const baseUrl = getBackendBaseUrl();
 
   // 前端超时控制（180s，与后端路由超时协调）
   const controller = new AbortController();
@@ -147,7 +154,7 @@ export async function* streamPlatformAiChat(options: PlatformStreamOptions): Asy
 /** 查询任务状态 */
 export async function checkJobStatus(jobId: string): Promise<{ status: string; error?: string } | null> {
   const token = useAuthStore.getState().token;
-  const baseUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+  const baseUrl = getBackendBaseUrl();
 
   try {
     const res = await fetch(`${baseUrl}/api/ai/stream/status/${jobId}`, {

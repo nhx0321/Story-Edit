@@ -1,5 +1,7 @@
 const path = require('path');
 
+const serverUrl = process.env.NEXT_PUBLIC_API_URL || process.env.SERVER_URL || 'http://127.0.0.1:3001';
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   ...(process.env.STANDALONE === '1' ? { output: 'standalone' } : {}),
@@ -11,7 +13,7 @@ const nextConfig = {
     return [
       {
         source: '/trpc/:path*',
-        destination: 'http://39.107.102.43:3001/trpc/:path*',
+        destination: `${serverUrl}/trpc/:path*`,
       },
     ];
   },

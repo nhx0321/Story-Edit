@@ -8,7 +8,10 @@ import { useAuthStore } from '@/lib/auth-store';
 
 function getBaseUrl() {
   if (typeof window !== 'undefined') return '';
-  return `http://localhost:${process.env.SERVER_PORT ?? 3001}`;
+
+  return process.env.NEXT_PUBLIC_API_URL
+    || process.env.SERVER_URL
+    || `http://127.0.0.1:${process.env.SERVER_PORT ?? 3001}`;
 }
 
 export function TRPCProvider({ children }: { children: React.ReactNode }) {

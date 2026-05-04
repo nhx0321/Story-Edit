@@ -16,5 +16,6 @@ functions/
 package-lock.json
 yarn.lock
 .pnpm-store/
+.turbo/
 .cache/
 tmp/

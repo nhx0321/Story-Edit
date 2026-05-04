@@ -5,7 +5,7 @@ export function middleware(request: NextRequest) {
 
   // Proxy /trpc/* requests to the backend server
   if (pathname.startsWith('/trpc')) {
-    const serverUrl = process.env.NEXT_PUBLIC_API_URL || process.env.SERVER_URL || 'http://localhost:3001';
+    const serverUrl = process.env.NEXT_PUBLIC_API_URL || process.env.SERVER_URL || 'http://127.0.0.1:3001';
     const url = new URL(pathname + request.nextUrl.search, serverUrl);
 
     return NextResponse.rewrite(url, {
