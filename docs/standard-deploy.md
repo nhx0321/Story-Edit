@@ -89,6 +89,61 @@ curl -i http://127.0.0.1:3000
 curl -i "http://127.0.0.1:3000/trpc/template.list?batch=1&input=%7B%220%22%3A%7B%22sortBy%22%3A%22newest%22%7D%7D"
 ```
 
+## 背景视频/图片发布规则
+
+`apps/web/public/backgrounds/` 保留为前台静态资源路径，后台继续沿用现有视频背景识别与发布逻辑：
+
+- 管理员后台仍通过已有管理逻辑发布背景记录
+- 前台继续按现有代码读取背景视频/图片文件
+- 背景资源文件本身不走 GitHub 版本同步，避免大文件反复占用仓库和拉取资源
+
+标准做法：
+
+1. 代码版本照常走 `git push` + 云端部署
+2. 如果本次版本涉及 `apps/web/public/backgrounds/` 文件变更，发布时额外提醒手动上传到阿里云服务器对应目录
+3. 上传完成后，沿用现有管理逻辑处理：
+   - 替换同名文件时，前台继续读取同路径资源
+   - 新增文件时，在管理员后台按现有命名/发布逻辑补充对应记录
+4. 部署过程不要清空服务器上的 `apps/web/public/backgrounds/` 目录
+
+阿里云服务器固定上传路径：
+
+```bash
+/root/Story-Edit/apps/web/public/backgrounds/
+```
+
+推荐上传步骤：
+
+```bash
+# 1. 本地确认要上传的文件
+ls apps/web/public/backgrounds
+
+# 2. 上传单个或多个文件到阿里云服务器
+scp apps/web/public/backgrounds/<文件名> root@<阿里云服务器IP>:/root/Story-Edit/apps/web/public/backgrounds/
+
+# 3. 登录服务器确认文件已到位
+ssh root@<阿里云服务器IP>
+ls -lh /root/Story-Edit/apps/web/public/backgrounds
+```
+
+如果一次上传多个背景文件，也可以直接上传整个目录下的指定文件：
+
+```bash
+scp apps/web/public/backgrounds/* root@<阿里云服务器IP>:/root/Story-Edit/apps/web/public/backgrounds/
+```
+
+上传后检查要点：
+
+1. 文件名与后台发布记录保持一致，例如视频文件名、缩略图文件名
+2. 替换同名文件后，前台会继续读取原路径资源；如浏览器仍显示旧内容，优先强刷或改文件名后重新发布
+3. 新增背景文件后，到管理员后台按现有命名/发布逻辑新增对应记录
+
+也就是说：
+
+- 代码发布自动推进
+- 背景资源不经 GitHub 中转
+- 资源更新时，由用户手动上传阿里云服务器完成素材替换
+
 ## 一键部署脚本
 
 仓库根目录已有：
