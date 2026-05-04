@@ -22,8 +22,11 @@ export interface StreamChunk {
 }
 
 function getBackendBaseUrl() {
-  return process.env.NEXT_PUBLIC_BACKEND_URL
-    || process.env.NEXT_PUBLIC_API_URL
+  if (typeof window !== 'undefined') {
+    return '';
+  }
+
+  return process.env.NEXT_PUBLIC_API_URL
     || process.env.SERVER_URL
     || 'http://127.0.0.1:3001';
 }

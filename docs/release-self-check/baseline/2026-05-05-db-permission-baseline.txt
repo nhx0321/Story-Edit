@@ -1,0 +1,60 @@
+# 2026-05-05 数据库权限与关键结构基线
+
+## 管理员账号状态
+[
+  {
+    "id": "33053954-4706-4eae-9cb5-f7972bab7cc5",
+    "nickname": "阿木",
+    "email": "nhx0321@163.com",
+    "is_admin": true,
+    "admin_level": 0,
+    "display_id": "UID100000"
+  }
+]
+
+## is_admin=true 且 admin_level is null 计数
+[
+  {
+    "null_admin_level_count": "0"
+  }
+]
+
+## user_token_accounts 列
+- id: uuid
+- user_id: uuid
+- balance: bigint
+- total_consumed: bigint
+- total_recharged: bigint
+- alert_threshold: bigint
+- alert_enabled: boolean
+- preferred_model: character varying
+- daily_limit: bigint
+- daily_used: bigint
+- daily_reset_at: timestamp without time zone
+- created_at: timestamp without time zone
+- updated_at: timestamp without time zone
+
+## api_channels 列
+- id: uuid
+- provider: character varying
+- name: character varying
+- api_key_encrypted: text
+- base_url: character varying
+- priority: integer
+- max_concurrency: integer
+- weight: integer
+- status: character varying
+- daily_limit: bigint
+- daily_used: bigint
+- daily_reset_at: timestamp without time zone
+- user_tier: character varying
+- last_error_at: timestamp without time zone
+- last_error_message: text
+- created_at: timestamp without time zone
+- updated_at: timestamp without time zone
+
+## 基线判断
+- 管理员数据库状态当前正常
+- `user_token_accounts` 已包含 `preferred_model`
+- `api_channels` 已包含本轮后台渠道管理依赖的关键列
+- 线上当前未见“缺列导致的本轮 P0 结构漂移”

@@ -1,0 +1,37 @@
+# 2026-05-05 本地工作树基线
+
+分支：main
+
+## git status --short --branch
+## main...origin/main
+ M apps/server/src/routes/ai-stream-platform.ts
+ M apps/server/src/routes/api-v1.ts
+ M apps/server/src/services/ai-gateway/crypto.ts
+ M apps/server/src/services/token-relay/router.ts
+ M apps/server/src/services/token-relay/token-billing.ts
+ M apps/web/app/admin/layout.tsx
+ M apps/web/app/settings/profile/page.tsx
+ M apps/web/components/chat/chat-panel.tsx
+ M apps/web/lib/ai-stream.ts
+ M apps/web/next-env.d.ts
+ M apps/web/next.config.js
+ M packages/ai-adapters/src/adapters/openai-compat.ts
+?? baseline-bundle.tgz
+
+## 收口分类
+### 纳入本轮
+- apps/server/src/routes/ai-stream-platform.ts
+- apps/server/src/routes/api-v1.ts
+- apps/server/src/services/ai-gateway/crypto.ts
+- apps/server/src/services/token-relay/router.ts
+- apps/server/src/services/token-relay/token-billing.ts
+- apps/web/app/admin/layout.tsx
+- apps/web/app/settings/profile/page.tsx
+- apps/web/components/chat/chat-panel.tsx
+- apps/web/lib/ai-stream.ts
+- apps/web/next.config.js
+- packages/ai-adapters/src/adapters/openai-compat.ts
+
+### 不纳入本轮
+- apps/web/next-env.d.ts
+- baseline-bundle.tgz

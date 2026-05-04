@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuthStore } from '@/lib/auth-store';
+import { trpc } from '@/lib/trpc';
 import Link from 'next/link';
 
 const navItems: Array<{ href: string; label: string; level: number | null; separator?: boolean }> = [
@@ -21,20 +22,80 @@ const navItems: Array<{ href: string; label: string; level: number | null; separ
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  const token = useAuthStore(state => state.token);
   const isAdmin = useAuthStore(state => state.isAdmin());
   const getAdminLevel = useAuthStore(state => state.getAdminLevel);
+  const setAuth = useAuthStore(state => state.setAuth);
+  const [hydrated, setHydrated] = useState(false);
   const [loading, setLoading] = useState(true);
+  const meQuery = trpc.auth.me.useQuery(undefined, {
+    enabled: hydrated && !!token,
+    retry: false,
+    staleTime: 0,
+  });
 
   useEffect(() => {
-    // Check if user is admin, redirect to dashboard if not
+    const unsub = useAuthStore.persist.onFinishHydration(() => {
+      setHydrated(true);
+    });
+
+    if (useAuthStore.persist.hasHydrated()) {
+      setHydrated(true);
+    }
+
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+
+    if (!token) {
+      router.replace('/login');
+      return;
+    }
+
+    if (meQuery.data) {
+      setAuth(token, {
+        id: meQuery.data.id,
+        email: meQuery.data.email,
+        nickname: meQuery.data.nickname,
+        isAdmin: meQuery.data.isAdmin,
+        displayId: meQuery.data.displayId,
+        adminLevel: meQuery.data.adminLevel,
+      });
+    }
+  }, [hydrated, token, router, meQuery.data, setAuth]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    if (meQuery.isLoading || meQuery.isFetching) return;
+
+    if (meQuery.error) {
+      if (!isAdmin) {
+        router.replace('/dashboard');
+      } else {
+        setLoading(false);
+      }
+      return;
+    }
+
+    if (meQuery.data) {
+      if (!meQuery.data.isAdmin) {
+        router.replace('/dashboard');
+      } else {
+        setLoading(false);
+      }
+      return;
+    }
+
     if (!isAdmin) {
       router.replace('/dashboard');
     } else {
       setLoading(false);
     }
-  }, [isAdmin, router]);
+  }, [hydrated, isAdmin, meQuery.data, meQuery.error, meQuery.isFetching, meQuery.isLoading, router]);
 
-  if (loading) {
+  if (!hydrated || loading || meQuery.isLoading || meQuery.isFetching) {
     return (
       <main className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-gray-400">加载中...</div>

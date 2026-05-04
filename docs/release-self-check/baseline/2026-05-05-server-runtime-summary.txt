@@ -1,0 +1,30 @@
+# 2026-05-05 服务器运行与部署基线
+
+服务器目录：/root/Story-Edit
+
+## 仓库状态
+- git_repo=no
+- 结论：当前仍是 archive/scp 覆盖式部署目录，不具备 git diff / git rollback 能力
+
+## PM2 状态
+- story-edit-server：online
+- story-edit-web：online
+
+## 健康检查
+- GET http://127.0.0.1:3001/health → 200 OK
+- GET http://127.0.0.1:3000 → 200 OK
+- GET http://127.0.0.1:3000/trpc/template.list?... → 200 OK
+
+## 背景资源目录
+- /root/Story-Edit/apps/web/public/backgrounds/ 文件在位
+- 已看到：beach / sea-island / snow / water / wheat-field 的 jpg + mp4
+- 结论：背景资源仍应继续走“服务器直传，不经 GitHub”双轨规则
+
+## 部署相关文件
+- /root/Story-Edit/deploy.sh 存在
+- /root/Story-Edit/ecosystem.config.cjs 存在
+- /root/Story-Edit/.env 存在
+
+## 当前判断
+- 线上服务处于可运行状态
+- 但标准主链尚未恢复到“GitHub 拉取 + 标准部署”，后续仍需单独完成服务器 git 化

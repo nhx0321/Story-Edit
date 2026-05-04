@@ -1,12 +1,11 @@
 // AI Key 加密工具 — AES-256-CBC
-import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
 
 const ALGORITHM = 'aes-256-cbc';
 
 function getEncryptionKey(): Buffer {
   const secret = process.env.AI_KEY_ENCRYPTION_SECRET || process.env.JWT_SECRET || 'dev-secret-do-not-use-in-production';
   // 用 SHA-256 确保 key 长度为 32 bytes
-  const { createHash } = require('crypto') as typeof import('crypto');
   return createHash('sha256').update(secret).digest();
 }
 

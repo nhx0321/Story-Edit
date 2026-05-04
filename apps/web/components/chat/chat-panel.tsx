@@ -292,23 +292,55 @@ export function ChatPanel({
 
   // Get user's AI configs
   const { data: configs } = trpc.ai.listConfigs.useQuery(undefined, { enabled: open });
+  const { data: preferredModelData } = trpc.token.getPreferredModel.useQuery(undefined, { enabled: open });
+  const { data: platformModels = [] } = trpc.token.getAllModels.useQuery(undefined, { enabled: open });
   // 获取Token账户信息（用于用量提示）
   const { data: tokenAccount } = trpc.token.getAccount.useQuery(undefined, { enabled: open });
   const utils = trpc.useUtils();
   const [selectedConfigId, setSelectedConfigId] = useState('');
+  const preferredModelId = preferredModelData?.preferredModel || 'longcat/LongCat-Flash-Thinking-2601';
+  const modelNameMap = useMemo(() => {
+    const map = new Map<string, string>();
 
-  // Update selected config when configs load — prefer default config
+    for (const model of platformModels) {
+      const fullKey = `${model.provider}/${model.modelId}`;
+      map.set(fullKey, model.modelName || model.modelId);
+      map.set(model.modelId, model.modelName || model.modelId);
+    }
+
+    for (const config of configs || []) {
+      const modelKey = config.defaultModel ? `${config.provider}/${config.defaultModel}` : config.provider;
+      map.set(modelKey, config.name);
+      if (config.defaultModel) {
+        map.set(config.defaultModel, config.name);
+      }
+    }
+
+    return map;
+  }, [platformModels, configs]);
+  const getModelDisplayName = useCallback((modelId?: string | null) => {
+    if (!modelId) return '';
+    return modelNameMap.get(modelId) || modelId;
+  }, [modelNameMap]);
+
+  // Update selected config when configs/preferred model load — prefer the config matching current preferred model
   useEffect(() => {
     if (configs && configs.length > 0) {
       setSelectedConfigId(prev => {
+        const preferredConfig = configs.find(c => {
+          const modelKey = c.defaultModel ? `${c.provider}/${c.defaultModel}` : c.provider;
+          return modelKey === preferredModelId;
+        });
+        if (preferredConfig) return preferredConfig.id;
+
         const exists = configs.some(c => c.id === prev);
         if (exists) return prev;
-        // Prefer the config marked as default
+
         const defaultConfig = configs.find(c => c.isDefault);
         return defaultConfig?.id || configs[0].id;
       });
     }
-  }, [configs, activeAgent]);
+  }, [configs, activeAgent, preferredModelId]);
 
   // 获取项目大纲上下文
   const { data: volumeList } = trpc.project.listVolumes.useQuery(
@@ -681,7 +713,6 @@ export function ChatPanel({
       }
     } else if (selectedConfigId) {
       creatingRef.current = true;
-      const config = configs?.find(c => c.id === selectedConfigId);
       createConv.mutate({
         projectId,
         type: currentConvType,
@@ -689,10 +720,10 @@ export function ChatPanel({
         roleKey: currentRoleKey,
         targetEntityId,
         targetEntityType,
-        modelId: config?.defaultModel || config?.provider || undefined,
+        modelId: preferredModelId,
       });
     }
-  }, [open, conversationId, existingConvs, selectedConfigId, currentRoleKey, currentConvType, configs, projectId, title, targetEntityId, targetEntityType, createConv, updateConvTarget]);
+  }, [open, conversationId, existingConvs, selectedConfigId, currentRoleKey, currentConvType, projectId, title, targetEntityId, targetEntityType, createConv, updateConvTarget, preferredModelId]);
 
   // 引导流步骤推进逻辑 — 确认后自动发送"继续"消息给 AI
   const handleActionConfirmed = async (type: string, entity: unknown) => {
@@ -887,7 +918,7 @@ export function ChatPanel({
 
   const { messages, streaming, confirmedActions, sendMessage, confirmAction, stopStreaming, recoveryState, dismissRecovery, startReconnect, modelId: convModelId, retryState } = useChat({
     conversationId, configId: selectedConfigId, projectId, roleKey: currentRoleKey, onActionConfirmed: handleActionConfirmed,
-    model: configs?.find(c => c.id === selectedConfigId)?.defaultModel || configs?.find(c => c.id === selectedConfigId)?.provider || undefined,
+    model: preferredModelId,
     volumes: currentRoleKey === 'editor' ? volumeList : undefined,
     chapterContext: currentRoleKey === 'writer' ? chapterContext : undefined,
     taskBrief: currentRoleKey === 'writer' ? taskBrief : undefined,
@@ -1132,7 +1163,6 @@ export function ChatPanel({
     setConversationIds(prev => ({ ...prev, [activeAgent]: null }));
     if (selectedConfigId && !creatingRef.current) {
       creatingRef.current = true;
-      const config = configs?.find(c => c.id === selectedConfigId);
       createConv.mutate({
         projectId,
         type: currentConvType,
@@ -1140,7 +1170,7 @@ export function ChatPanel({
         roleKey: currentRoleKey,
         targetEntityId,
         targetEntityType,
-        modelId: config?.defaultModel || config?.provider || undefined,
+        modelId: preferredModelId,
       });
     }
   };
@@ -1281,14 +1311,21 @@ export function ChatPanel({
               <span className="text-xs text-gray-400">
                 {streaming ? '思考中...' : `${messages.length} 条消息`}
               </span>
-              {/* 模型选择器（对话创建后锁定模型） */}
+              {/* 模型状态：已有对话显示锁定模型；若用户已切换首选模型，则额外提示新对话将使用的新模型 */}
               {convModelId ? (
-                <span className="text-xs text-gray-500 bg-gray-100 rounded px-1.5 py-0.5 inline-flex items-center gap-1" title="当前对话已绑定模型，如需切换请开启新对话">
-                  <svg className="w-3 h-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                  </svg>
-                  {configs?.find(c => c.id === selectedConfigId)?.name || convModelId}
-                </span>
+                <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                  <span className="text-xs text-gray-500 bg-gray-100 rounded px-1.5 py-0.5 inline-flex items-center gap-1" title="当前对话已绑定模型，如需切换请开启新对话">
+                    <svg className="w-3 h-3 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                    当前对话：{getModelDisplayName(convModelId)}
+                  </span>
+                  {preferredModelId && preferredModelId !== convModelId && (
+                    <span className="text-xs text-blue-600 bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5 inline-flex items-center gap-1" title="点击“新对话”后将切换到这个模型">
+                      新对话将使用：{getModelDisplayName(preferredModelId)}
+                    </span>
+                  )}
+                </div>
               ) : (configs && configs.length > 1 && (
                 <select value={selectedConfigId} onChange={e => setSelectedConfigId(e.target.value)}
                   className="text-xs bg-transparent text-gray-600 border border-gray-200 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-gray-300">

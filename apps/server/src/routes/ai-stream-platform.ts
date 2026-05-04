@@ -50,7 +50,8 @@ async function streamWithPlatformToken(
 
   // 1. 获取模型定价
   const modelProvider = getProviderFromModel(model);
-  const pricing = await pricingService.getModelPricing(modelProvider, model);
+  const modelId = extractModelId(model);
+  const pricing = await pricingService.getModelPricing(modelProvider, modelId);
   if (!pricing) throw new Error(`模型 ${model} 暂无定价信息`);
 
   // 2. 确保Token账户存在
@@ -122,7 +123,7 @@ async function streamWithPlatformToken(
     const adapter = createAdapter(actualProvider, {
       apiKey: channelApiKey,
       baseUrl: channel.baseUrl || undefined,
-      defaultModel: model,
+      defaultModel: modelId,
     });
 
     // 为每次尝试设置独立超时（150s，longcat 实测最长 148s）
@@ -132,7 +133,7 @@ async function streamWithPlatformToken(
 
     try {
       const stream = adapter.chatStream(messages, {
-        model, temperature, maxTokens,
+        model: modelId, temperature, maxTokens,
         signal: attemptController.signal,
       });
       const iterator = stream[Symbol.asyncIterator]();
@@ -266,8 +267,8 @@ async function streamWithPlatformToken(
     await consumptionTracker.recordConsumption({
       userId,
       source: 'in_app',
-      provider: modelProvider,
-      modelId: model,
+      provider: usedChannel?.provider || modelProvider,
+      modelId,
       requestType: 'chat',
       inputTokens: totalInputTokens,
       outputTokens: totalOutputTokens,
@@ -286,8 +287,8 @@ async function streamWithPlatformToken(
     await consumptionTracker.recordConsumption({
       userId,
       source: 'in_app',
-      provider: modelProvider,
-      modelId: model,
+      provider: usedChannel?.provider || modelProvider,
+      modelId,
       requestType: 'chat',
       inputTokens: estimatedInputTokens,
       outputTokens: estimatedOutputTokens,
@@ -438,7 +439,7 @@ export async function registerChannelTestRoute(app: FastifyInstance) {
       const adapter = createAdapter(ch.provider, {
         apiKey,
         baseUrl: ch.baseUrl || undefined,
-        defaultModel: model,
+        defaultModel: extractModelId(model),
       });
 
       const startTime = Date.now();
@@ -471,6 +472,17 @@ function writeStreamChunk(reply: any, result: IteratorResult<any>): void {
     if (result.value.thinking) event.thinking = result.value.thinking;
     reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
   }
+}
+
+function extractModelId(model: string): string {
+  const slashIdx = model.indexOf('/');
+  if (slashIdx > 0) {
+    const prefix = model.substring(0, slashIdx).toLowerCase();
+    if (['deepseek', 'claude', 'anthropic', 'gpt', 'o1', 'o3', 'o4', 'longcat', 'qwen', 'openai'].includes(prefix)) {
+      return model.substring(slashIdx + 1);
+    }
+  }
+  return model;
 }
 
 function getProviderFromModel(model: string): string {

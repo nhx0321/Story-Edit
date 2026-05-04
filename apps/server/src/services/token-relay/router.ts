@@ -27,6 +27,7 @@ export const tokenRelayRouter = router({
 
   // 获取用户首选模型
   getPreferredModel: protectedProcedure.query(async ({ ctx }) => {
+    await tokenBilling.ensureAccount(ctx.userId);
     const [account] = await db.select({ preferredModel: userTokenAccounts.preferredModel })
       .from(userTokenAccounts).where(eq(userTokenAccounts.userId, ctx.userId));
     return { preferredModel: account?.preferredModel || null };
@@ -308,17 +309,36 @@ export const tokenRelayRouter = router({
       dailyLimit: z.number().default(5000000),
     }))
     .mutation(async ({ input }) => {
-      const [ch] = await db.insert(apiChannels).values({
-        provider: input.provider,
-        name: input.name || null,
-        apiKeyEncrypted: encryptApiKey(input.apiKeyPlain),
-        baseUrl: input.baseUrl || null,
-        priority: input.priority,
-        weight: input.weight,
-        userTier: input.userTier,
-        dailyLimit: input.dailyLimit,
-      }).returning();
-      return ch;
+      try {
+        const [ch] = await db.insert(apiChannels).values({
+          provider: input.provider,
+          name: input.name || null,
+          apiKeyEncrypted: encryptApiKey(input.apiKeyPlain),
+          baseUrl: input.baseUrl || null,
+          priority: input.priority,
+          weight: input.weight,
+          userTier: input.userTier,
+          dailyLimit: input.dailyLimit,
+        }).returning();
+        return {
+          id: ch!.id,
+          provider: ch!.provider,
+          name: ch!.name,
+          status: ch!.status,
+        };
+      } catch (error) {
+        console.error('[token.addChannel] failed', {
+          provider: input.provider,
+          name: input.name || null,
+          baseUrl: input.baseUrl || null,
+          priority: input.priority,
+          weight: input.weight,
+          userTier: input.userTier,
+          dailyLimit: input.dailyLimit,
+          error,
+        });
+        throw error;
+      }
     }),
 
   updateChannel: adminProcedureLevel(0)

@@ -1,0 +1,11 @@
+# 2026-05-05 GitHub 基线
+
+当前分支：main
+本地 HEAD：7b81d5932bdc4898003309e464b910a346f3f0e5
+远端 origin/HEAD：7b81d5932bdc4898003309e464b910a346f3f0e5
+远端仓库：git@github.com:nhx0321/Story-Edit.git
+
+结论：
+- 本地已提交基线与 GitHub 当前 HEAD 一致
+- 本轮待收口内容全部位于本地未提交改动中
+- 后续形成统一版本时，应以本地完成自检后的新提交推送到 GitHub，作为新的统一基线

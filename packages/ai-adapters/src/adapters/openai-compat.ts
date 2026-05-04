@@ -2,7 +2,7 @@
 import type { AIAdapter, AIMessage, AIStreamChunk, ChatOptions, ChatResult, AdapterConfig, TokenUsage } from '../index';
 
 interface OpenAIResponse {
-  choices: { message: { content: string } }[];
+  choices: { message: { content?: string | null; reasoning_content?: string | null } }[];
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }
 
@@ -88,7 +88,7 @@ export class OpenAICompatAdapter implements AIAdapter {
     }
 
     const data = (await res.json()) as OpenAIResponse;
-    const content = data.choices?.[0]?.message?.content || '';
+    const content = data.choices?.[0]?.message?.content || data.choices?.[0]?.message?.reasoning_content || '';
 
     // 记录 API 返回空响应的情况
     if (!content) {

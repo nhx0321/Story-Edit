@@ -15,6 +15,14 @@ const nextConfig = {
         source: '/trpc/:path*',
         destination: `${serverUrl}/trpc/:path*`,
       },
+      {
+        source: '/api/ai/stream/:path*',
+        destination: `${serverUrl}/api/ai/stream/:path*`,
+      },
+      {
+        source: '/api/ai/stream',
+        destination: `${serverUrl}/api/ai/stream`,
+      },
     ];
   },
 };

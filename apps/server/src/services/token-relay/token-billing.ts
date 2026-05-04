@@ -199,7 +199,7 @@ export async function ensureAccount(userId: string): Promise<void> {
       userId,
       balance: initialBalance,
       dailyLimit: 10000000, // 每日限制 1000 万 token
-    });
+    }).onConflictDoNothing({ target: userTokenAccounts.userId });
   }
 }
 

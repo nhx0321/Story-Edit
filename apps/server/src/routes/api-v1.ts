@@ -120,7 +120,8 @@ async function handleNonStream(
   app: FastifyInstance,
 ) {
   const provider = getProviderFromModel(body.model);
-  const pricing = await pricingService.getModelPricing(provider, body.model);
+  const modelId = extractModelId(body.model);
+  const pricing = await pricingService.getModelPricing(provider, modelId);
   if (!pricing) {
     return reply.status(400).send({ error: { message: `模型 ${body.model} 暂不可用`, type: 'invalid_request_error' } });
   }
@@ -167,12 +168,12 @@ async function handleNonStream(
   const adapter = createAdapter(provider, {
     apiKey: channelApiKey,
     baseUrl: channel.baseUrl || undefined,
-    defaultModel: body.model,
+    defaultModel: modelId,
   });
 
   try {
     const result = await adapter.chat(body.messages as AIMessage[], {
-      model: body.model,
+      model: modelId,
       temperature: body.temperature,
       maxTokens: body.max_tokens,
     });
@@ -193,7 +194,7 @@ async function handleNonStream(
       source: 'external_api',
       apiKeyId: keyRecord.id,
       provider,
-      modelId: body.model,
+      modelId,
       requestType: 'chat',
       inputTokens: billedInputTokens,
       outputTokens: billedOutputTokens,
@@ -236,7 +237,8 @@ async function handleStream(
   app: FastifyInstance,
 ) {
   const provider = getProviderFromModel(body.model);
-  const pricing = await pricingService.getModelPricing(provider, body.model);
+  const modelId = extractModelId(body.model);
+  const pricing = await pricingService.getModelPricing(provider, modelId);
   if (!pricing) {
     return reply.status(400).send({ error: { message: `模型 ${body.model} 暂不可用`, type: 'invalid_request_error' } });
   }
@@ -283,7 +285,7 @@ async function handleStream(
   const adapter = createAdapter(provider, {
     apiKey: channelApiKey,
     baseUrl: channel.baseUrl || undefined,
-    defaultModel: body.model,
+    defaultModel: modelId,
   });
 
   reply.raw.writeHead(200, {
@@ -304,7 +306,7 @@ async function handleStream(
 
   try {
     const stream = adapter.chatStream(body.messages as AIMessage[], {
-      model: body.model,
+      model: modelId,
       temperature: body.temperature,
       maxTokens: body.max_tokens,
     });
@@ -377,7 +379,7 @@ async function handleStream(
       source: 'external_api',
       apiKeyId: keyRecord.id,
       provider,
-      modelId: body.model,
+      modelId,
       requestType: 'chat',
       inputTokens: totalInputTokens,
       outputTokens: totalOutputTokens,
@@ -396,7 +398,7 @@ async function handleStream(
       source: 'external_api',
       apiKeyId: keyRecord.id,
       provider,
-      modelId: body.model,
+      modelId,
       requestType: 'chat',
       inputTokens: estimatedInput,
       outputTokens: estimatedOutput,
@@ -409,6 +411,17 @@ async function handleStream(
 }
 
 // ===== Helpers =====
+
+function extractModelId(model: string): string {
+  const slashIdx = model.indexOf('/');
+  if (slashIdx > 0) {
+    const prefix = model.substring(0, slashIdx).toLowerCase();
+    if (['deepseek', 'claude', 'anthropic', 'gpt', 'o1', 'o3', 'o4', 'longcat', 'qwen', 'openai'].includes(prefix)) {
+      return model.substring(slashIdx + 1);
+    }
+  }
+  return model;
+}
 
 function getProviderFromModel(model: string): string {
   if (model.startsWith('deepseek')) return 'deepseek';

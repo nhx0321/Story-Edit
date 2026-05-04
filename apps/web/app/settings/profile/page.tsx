@@ -24,15 +24,45 @@ export default function ProfilePage() {
   const [showBindEmail, setShowBindEmail] = useState(false);
 
   const { data: profile } = trpc.userAccount.getProfile.useQuery(undefined, { enabled: !!token });
+  const { refetch: refetchAuthMe } = trpc.auth.me.useQuery(undefined, {
+    enabled: !!token,
+    staleTime: 0,
+    refetchOnWindowFocus: false,
+  });
+  const utils = trpc.useUtils();
   const updateProfile = trpc.userAccount.updateProfile.useMutation({
-    onSuccess: () => {
+    onSuccess: async () => {
+      await Promise.all([
+        utils.userAccount.getProfile.invalidate(),
+        utils.auth.me.invalidate(),
+      ]);
+
+      const latestMe = await refetchAuthMe();
+      if (token && latestMe.data) {
+        setAuth(token, {
+          id: latestMe.data.id,
+          email: latestMe.data.email,
+          nickname: latestMe.data.nickname,
+          isAdmin: latestMe.data.isAdmin,
+          displayId: latestMe.data.displayId,
+          adminLevel: latestMe.data.adminLevel,
+        });
+        return;
+      }
+
       if (token && user) {
-        setAuth(token, { id: user.id, email: form.email, nickname: form.nickname });
+        setAuth(token, {
+          id: user.id,
+          email: user.email,
+          nickname: form.nickname,
+          isAdmin: user.isAdmin,
+          displayId: user.displayId,
+          adminLevel: user.adminLevel,
+        });
       }
     },
   });
   const changePassword = trpc.userAccount.changePassword.useMutation();
-  const utils = trpc.useUtils();
 
   const bindPhone = trpc.auth.bindPhone.useMutation({
     onSuccess: () => {
