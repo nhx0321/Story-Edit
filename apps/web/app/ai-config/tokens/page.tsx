@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import { trpc } from '@/lib/trpc';
 import Link from 'next/link';
 
@@ -15,7 +16,12 @@ export default function AIConfigTokensPage() {
   const totalConsumed = account?.totalConsumed ?? 0;
   const totalRecharged = account?.totalRecharged ?? 0;
   const dailyLimit = account?.dailyLimit ?? 100_000;
-  const dailyUsed = account?.dailyUsed ?? 0;
+  const freeModelDailyUsed = account?.dailyUsed ?? 0;
+  const dailyConsumed = stats?.todayTokens ?? 0;
+  const modelStatsEntries = useMemo(() => Object.entries(stats?.byModel ?? {}).filter(([, data]) => (
+    (data.todayTokens ?? 0) > 0 || (data.totalTokens ?? 0) > 0
+  )), [stats?.byModel]);
+  const hasModelConsumption = modelStatsEntries.length > 0;
   const alertThreshold = account?.alertThreshold;
   const alertEnabled = account?.alertEnabled ?? false;
 
@@ -26,7 +32,7 @@ export default function AIConfigTokensPage() {
     return Math.round(units / 10_000_000 * 1_000_000);
   };
 
-  const dailyPercent = dailyLimit > 0 ? Math.round((dailyUsed / dailyLimit) * 100) : 0;
+  const dailyPercent = dailyLimit > 0 ? Math.round((freeModelDailyUsed / dailyLimit) * 100) : 0;
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -42,7 +48,13 @@ export default function AIConfigTokensPage() {
 
         <div className="bg-white rounded-xl border border-gray-200 p-6">
           <h2 className="text-sm font-medium text-gray-500 mb-1">今日消耗</h2>
-          <p className="text-3xl font-bold text-gray-900">{dailyUsed.toLocaleString()}</p>
+          <p className="text-3xl font-bold text-gray-900">{dailyConsumed.toLocaleString()}</p>
+          <p className="text-xs text-gray-400 mt-1">按全部站内模型汇总输入 + 输出 Token</p>
+        </div>
+
+        <div className="bg-white rounded-xl border border-gray-200 p-6">
+          <h2 className="text-sm font-medium text-gray-500 mb-1">免费模型日限额</h2>
+          <p className="text-3xl font-bold text-gray-900">{freeModelDailyUsed.toLocaleString()}</p>
           <p className="text-xs text-gray-400 mt-1">免费模型日限额 {dailyLimit.toLocaleString()} Token</p>
           <div className="mt-3 h-2 bg-gray-100 rounded-full overflow-hidden">
             <div
@@ -67,14 +79,20 @@ export default function AIConfigTokensPage() {
       </div>
 
       {/* 消耗分布 */}
-      {stats && stats.totalCost > 0 && (
+      {hasModelConsumption && (
         <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
           <h2 className="font-semibold mb-4">模型消耗分布</h2>
           <div className="space-y-3">
-            {Object.entries(stats.byModel).map(([key, data]) => (
-              <div key={key} className="flex items-center justify-between">
-                <span className="text-sm text-gray-600">{key}</span>
-                <span className="text-sm font-medium">{toTokens(data.totalCost).toLocaleString()} token</span>
+            {modelStatsEntries.map(([key, data]) => (
+              <div key={key} className="flex items-center justify-between gap-4">
+                <div>
+                  <span className="text-sm text-gray-600 block">{key}</span>
+                  <span className="text-xs text-gray-400">今日 {data.todayTokens.toLocaleString()} tokens / 累计 {data.totalTokens.toLocaleString()} tokens</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-sm font-medium text-gray-900">今日 {data.todayCallCount.toLocaleString()} 次</span>
+                  <span className="text-xs text-gray-400 block">累计 {data.callCount.toLocaleString()} 次</span>
+                </div>
               </div>
             ))}
           </div>
@@ -87,7 +105,7 @@ export default function AIConfigTokensPage() {
       )}
 
       {/* 站内用量统计入口（无消耗时也显示） */}
-      {(!stats || stats.totalCost === 0) && (
+      {!hasModelConsumption && (
         <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
           <h2 className="font-semibold mb-2">站内用量统计</h2>
           <p className="text-sm text-gray-500 mb-3">查看详细的站内 Token 消费记录</p>

@@ -69,21 +69,74 @@ export async function getUserConsumption(
  * 查询用户的消费统计（按模型汇总）
  */
 export async function getUserConsumptionStats(userId: string, startDate?: Date, endDate?: Date) {
-  const logs = await getUserConsumption(userId, { limit: 1000, startDate, endDate });
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
 
-  const byModel: Record<string, { totalCost: number; totalInput: number; totalOutput: number }> = {};
-  let totalCost = 0;
+  const conditions = [eq(tokenConsumptionLogs.userId, userId)];
+  if (startDate) conditions.push(gte(tokenConsumptionLogs.createdAt, startDate));
+  if (endDate) conditions.push(lte(tokenConsumptionLogs.createdAt, endDate));
+  const whereClause = and(...conditions);
 
-  for (const log of logs) {
-    const key = `${log.provider}/${log.modelId}`;
-    if (!byModel[key]) {
-      byModel[key] = { totalCost: 0, totalInput: 0, totalOutput: 0 };
-    }
-    byModel[key].totalCost += (log.cost ?? 0);
-    byModel[key].totalInput += (log.inputTokens ?? 0);
-    byModel[key].totalOutput += (log.outputTokens ?? 0);
-    totalCost += (log.cost ?? 0);
-  }
+  const [summaryRows, rows] = await Promise.all([
+    db.select({
+    totalCost: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.cost}), 0)::bigint`,
+    totalInput: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.inputTokens}), 0)::bigint`,
+    totalOutput: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.outputTokens}), 0)::bigint`,
+    totalTokens: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.inputTokens} + ${tokenConsumptionLogs.outputTokens}), 0)::bigint`,
+    todayCost: sql<number>`COALESCE(SUM(CASE WHEN ${tokenConsumptionLogs.createdAt} >= ${todayStart} THEN ${tokenConsumptionLogs.cost} ELSE 0 END), 0)::bigint`,
+    todayInput: sql<number>`COALESCE(SUM(CASE WHEN ${tokenConsumptionLogs.createdAt} >= ${todayStart} THEN ${tokenConsumptionLogs.inputTokens} ELSE 0 END), 0)::bigint`,
+    todayOutput: sql<number>`COALESCE(SUM(CASE WHEN ${tokenConsumptionLogs.createdAt} >= ${todayStart} THEN ${tokenConsumptionLogs.outputTokens} ELSE 0 END), 0)::bigint`,
+    todayTokens: sql<number>`COALESCE(SUM(CASE WHEN ${tokenConsumptionLogs.createdAt} >= ${todayStart} THEN ${tokenConsumptionLogs.inputTokens} + ${tokenConsumptionLogs.outputTokens} ELSE 0 END), 0)::bigint`,
+    })
+      .from(tokenConsumptionLogs)
+      .where(whereClause),
+    db.select({
+      provider: tokenConsumptionLogs.provider,
+      modelId: tokenConsumptionLogs.modelId,
+      totalCost: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.cost}), 0)::bigint`,
+      totalInput: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.inputTokens}), 0)::bigint`,
+      totalOutput: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.outputTokens}), 0)::bigint`,
+      totalTokens: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.inputTokens} + ${tokenConsumptionLogs.outputTokens}), 0)::bigint`,
+      todayCost: sql<number>`COALESCE(SUM(CASE WHEN ${tokenConsumptionLogs.createdAt} >= ${todayStart} THEN ${tokenConsumptionLogs.cost} ELSE 0 END), 0)::bigint`,
+      todayInput: sql<number>`COALESCE(SUM(CASE WHEN ${tokenConsumptionLogs.createdAt} >= ${todayStart} THEN ${tokenConsumptionLogs.inputTokens} ELSE 0 END), 0)::bigint`,
+      todayOutput: sql<number>`COALESCE(SUM(CASE WHEN ${tokenConsumptionLogs.createdAt} >= ${todayStart} THEN ${tokenConsumptionLogs.outputTokens} ELSE 0 END), 0)::bigint`,
+      todayTokens: sql<number>`COALESCE(SUM(CASE WHEN ${tokenConsumptionLogs.createdAt} >= ${todayStart} THEN ${tokenConsumptionLogs.inputTokens} + ${tokenConsumptionLogs.outputTokens} ELSE 0 END), 0)::bigint`,
+      callCount: sql<number>`COUNT(*)::int`,
+      todayCallCount: sql<number>`COALESCE(SUM(CASE WHEN ${tokenConsumptionLogs.createdAt} >= ${todayStart} THEN 1 ELSE 0 END), 0)::int`,
+    })
+      .from(tokenConsumptionLogs)
+      .where(whereClause)
+      .groupBy(tokenConsumptionLogs.provider, tokenConsumptionLogs.modelId)
+      .orderBy(sql`COALESCE(SUM(${tokenConsumptionLogs.inputTokens} + ${tokenConsumptionLogs.outputTokens}), 0) DESC`),
+  ]);
 
-  return { totalCost, byModel };
+  const [summary] = summaryRows;
+
+  const byModel = Object.fromEntries(rows.map((row) => [
+    `${row.provider}/${row.modelId}`,
+    {
+      totalCost: row.totalCost ?? 0,
+      totalInput: row.totalInput ?? 0,
+      totalOutput: row.totalOutput ?? 0,
+      totalTokens: row.totalTokens ?? 0,
+      todayCost: row.todayCost ?? 0,
+      todayInput: row.todayInput ?? 0,
+      todayOutput: row.todayOutput ?? 0,
+      todayTokens: row.todayTokens ?? 0,
+      callCount: row.callCount ?? 0,
+      todayCallCount: row.todayCallCount ?? 0,
+    },
+  ]));
+
+  return {
+    totalCost: summary?.totalCost ?? 0,
+    totalInput: summary?.totalInput ?? 0,
+    totalOutput: summary?.totalOutput ?? 0,
+    totalTokens: summary?.totalTokens ?? 0,
+    todayCost: summary?.todayCost ?? 0,
+    todayInput: summary?.todayInput ?? 0,
+    todayOutput: summary?.todayOutput ?? 0,
+    todayTokens: summary?.todayTokens ?? 0,
+    byModel,
+  };
 }

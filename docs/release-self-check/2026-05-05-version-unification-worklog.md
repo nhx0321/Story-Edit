@@ -616,6 +616,70 @@
 
 这些事项可以后续单独优化，但不应阻塞“先恢复标准 git 部署主链”。
 
+### 9.8 本次 git 化实施结果
+- 服务器无法直接连通 GitHub：
+  - HTTPS 访问 `github.com` 超时
+  - SSH 访问 `git@github.com` 缺少可用 deploy key
+- 因此本次先采用 **git bundle 引导 git 化**：
+  - 本地创建 `story-edit-main.bundle`
+  - 上传到服务器 `/root/story-edit-main.bundle`
+  - 在服务器创建并行工作副本：`/root/story-edit-gitified`
+- 已在并行工作副本中完成：
+  - checkout 提交 `086adcae8637c66f57b725416d32ea2c4c25157b`
+  - 复制 `.env`
+  - 复制 `apps/web/public/backgrounds/`
+  - `pnpm install --frozen-lockfile`
+  - `pnpm build`
+- 已将 PM2 正式切换到 git 化目录：
+  - `story-edit-server` -> `/root/story-edit-gitified/apps/server`
+  - `story-edit-web` -> `/root/story-edit-gitified/apps/web`
+- 最终冒烟通过：
+  - `3001/health` -> 200
+  - `3000` -> 200
+  - `template.list` -> 200
+- 当前 git 化目录状态：
+  - `git rev-parse HEAD` = `086adcae8637c66f57b725416d32ea2c4c25157b`
+  - `origin` 已改写为 `https://github.com/nhx0321/Story-Edit.git`
+- 当前残留噪声项：
+  - `apps/web/next-env.d.ts`
+  - `apps/web/public/backgrounds/`（按既定双轨规则保留为服务器本地资源，不纳入 Git）
+
+### 9.9 当前未闭合项
+- 服务器到 GitHub 的直连能力尚未恢复，因此后续若要真正执行 `git pull`，仍需补一项：
+  - 修通服务器到 GitHub 的 HTTPS 网络访问，或
+  - 为服务器配置可用的 GitHub SSH deploy key
+- 在这一步闭合前，服务器已经具备“git 工作副本 + 标准 deploy.sh + PM2 标准路径”的结构，但更新代码仍需通过 bundle / 手工同步过渡
+
+### 9.10 GitHub 直连能力补通结果
+- 已为服务器新增仓库 deploy key，并写入服务器 SSH 配置：
+  - `/root/.ssh/story-edit-github-deploy`
+  - `/root/.ssh/config`
+- 已验证服务器可通过 SSH 访问 GitHub 仓库：
+  - `ssh -T git@github.com` 成功返回仓库级身份提示
+- 已将 git 化目录 `origin` 改为：
+  - `git@github.com:nhx0321/Story-Edit.git`
+- 已完成并验证：
+  - `git ls-remote origin HEAD`
+  - `git fetch origin`
+  - `git branch --set-upstream-to=origin/main main`
+  - `git pull --ff-only origin main`
+- 当前服务器 git 工作副本已与 GitHub `main` 对齐：
+  - `HEAD = origin/main = 086adcae8637c66f57b725416d32ea2c4c25157b`
+- 补通后再次验证服务：
+  - `3001/health` -> 200
+  - `3000` -> 200
+  - `template.list` -> 200
+
+### 9.11 当前最终状态
+- 服务器已同时满足：
+  - git 工作副本运行
+  - `origin` 直连 GitHub
+  - 可执行 `git pull`
+  - 可执行 `bash deploy.sh`
+  - PM2 在线
+  - 固定冒烟检查通过
+- 当前真正遗留项只剩常规优化项，不再影响“版本统一 + 标准发布主链恢复”这一主目标
+
 ## 10. 本文档后续追加规则
 - 每次新增代码修改后，在“变更 / 验证 / 回退对照表”追加一行
 - 每次完成一轮验证后，在“执行记录”新增一个小节

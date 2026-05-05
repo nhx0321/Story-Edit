@@ -74,18 +74,34 @@ export default function ChannelDetailPage() {
     return data.hourlyData.map(h => ({ label: h.label, value: h.outputTokens, color: '#10b981' }));
   }, [data]);
 
-  // 用户占比饼图数据
+  const todayUsageTokens = useMemo(
+    () => (data?.totalInputTokens ?? 0) + (data?.totalOutputTokens ?? 0),
+    [data?.totalInputTokens, data?.totalOutputTokens],
+  );
+  const lifetimeUsageTokens = useMemo(
+    () => (data?.lifetimeInputTokens ?? 0) + (data?.lifetimeOutputTokens ?? 0),
+    [data?.lifetimeInputTokens, data?.lifetimeOutputTokens],
+  );
+  const monthUsageTokens = useMemo(
+    () => (data?.monthlyData ?? []).reduce((sum, item) => sum + (item.inputTokens ?? 0) + (item.outputTokens ?? 0), 0),
+    [data?.monthlyData],
+  );
+
   const userPieData = useMemo(() => {
-    if (!data?.userRanking || data.totalCost === 0) return [];
+    if (!data?.userRanking || todayUsageTokens === 0) return [];
     const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
-    return data.userRanking.map((u, i) => ({
-      userId: u.userId.slice(0, 8) + '...',
-      cost: u.cost,
-      count: u.count,
-      pct: ((u.cost / data.totalCost) * 100).toFixed(1),
-      color: colors[i % colors.length],
-    }));
-  }, [data]);
+    return data.userRanking.map((u, i) => {
+      const totalTokens = (u.inputTokens ?? 0) + (u.outputTokens ?? 0);
+      return {
+        userId: u.userId.slice(0, 8) + '...',
+        cost: u.cost,
+        count: u.count,
+        totalTokens,
+        pct: ((totalTokens / todayUsageTokens) * 100).toFixed(1),
+        color: colors[i % colors.length],
+      };
+    });
+  }, [data, todayUsageTokens]);
 
   // 月度每日柱状图数据
   const monthlyBarData = useMemo(() => {
@@ -150,7 +166,7 @@ export default function ChannelDetailPage() {
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <p className="text-xs text-gray-400 mb-1">今日消耗</p>
-          <p className="text-xl font-bold">{toTokens(data.totalCost).toLocaleString()} Token</p>
+          <p className="text-xl font-bold">{todayUsageTokens.toLocaleString()} Token</p>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <p className="text-xs text-gray-400 mb-1">今日活跃用户</p>
@@ -162,7 +178,7 @@ export default function ChannelDetailPage() {
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <p className="text-xs text-gray-400 mb-1">累计总消耗</p>
-          <p className="text-xl font-bold">{toTokens(data.lifetimeCost).toLocaleString()} Token</p>
+          <p className="text-xl font-bold">{lifetimeUsageTokens.toLocaleString()} Token</p>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <p className="text-xs text-gray-400 mb-1">累计活跃用户</p>
@@ -216,6 +232,7 @@ export default function ChannelDetailPage() {
                       </div>
                       <div className="flex items-center gap-4">
                         <span className="text-gray-500">{u.count} 次</span>
+                        <span className="text-gray-500">{u.totalTokens.toLocaleString()} Token</span>
                         <span className="font-medium">{u.pct}%</span>
                       </div>
                     </div>
@@ -265,7 +282,7 @@ export default function ChannelDetailPage() {
           <h2 className="text-sm font-medium">月度统计</h2>
           <div className="flex items-center gap-4 text-sm">
             <span className="text-gray-500">本月请求 <span className="font-bold text-gray-900">{(data.monthTotalRequests ?? 0).toLocaleString()}</span></span>
-            <span className="text-gray-500">本月消耗 <span className="font-bold text-gray-900">{toTokens(data.monthTotalCost ?? 0).toLocaleString()} Token</span></span>
+            <span className="text-gray-500">本月消耗 <span className="font-bold text-gray-900">{monthUsageTokens.toLocaleString()} Token</span></span>
           </div>
         </div>
         {monthlyBarData.length > 0 ? (
