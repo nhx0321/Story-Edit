@@ -143,7 +143,7 @@ export default function ChannelDetailPage() {
       </div>
 
       {/* 概览卡片 */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
         <div className="bg-white rounded-xl border border-gray-200 p-4">
           <p className="text-xs text-gray-400 mb-1">今日请求数</p>
           <p className="text-xl font-bold">{data.totalRequests.toLocaleString()}</p>
@@ -153,8 +153,20 @@ export default function ChannelDetailPage() {
           <p className="text-xl font-bold">{toTokens(data.totalCost).toLocaleString()} Token</p>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-4">
-          <p className="text-xs text-gray-400 mb-1">活跃用户</p>
-          <p className="text-xl font-bold">{data.userRanking.length}</p>
+          <p className="text-xs text-gray-400 mb-1">今日活跃用户</p>
+          <p className="text-xl font-bold">{data.totalUsers.toLocaleString()}</p>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <p className="text-xs text-gray-400 mb-1">累计总请求</p>
+          <p className="text-xl font-bold">{data.lifetimeRequests.toLocaleString()}</p>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <p className="text-xs text-gray-400 mb-1">累计总消耗</p>
+          <p className="text-xl font-bold">{toTokens(data.lifetimeCost).toLocaleString()} Token</p>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <p className="text-xs text-gray-400 mb-1">累计活跃用户</p>
+          <p className="text-xl font-bold">{data.lifetimeUsers.toLocaleString()}</p>
         </div>
       </div>
 

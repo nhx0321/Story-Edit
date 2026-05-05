@@ -189,6 +189,7 @@ async function runBackgroundAnalysis(
       await consumptionTracker.recordConsumption({
         userId,
         source: 'in_app',
+        channelId: channel.id,
         provider,
         modelId,
         requestType: 'chat',
@@ -477,7 +478,7 @@ export const analysisRouter = router({
               );
               await channelManager.recordChannelUsage(channel.id, totalInputTokens + totalOutputTokens);
               await consumptionTracker.recordConsumption({
-                userId: ctx.userId, source: 'in_app', provider, modelId,
+                userId: ctx.userId, source: 'in_app', channelId: channel.id, provider, modelId,
                 requestType: 'chat', inputTokens: totalInputTokens,
                 outputTokens: totalOutputTokens, cost: finalCost, projectId: input.projectId,
               });

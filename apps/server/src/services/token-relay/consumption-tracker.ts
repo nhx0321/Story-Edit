@@ -7,6 +7,7 @@ export interface ConsumptionRecord {
   userId: string;
   source: 'in_app' | 'external_api';
   apiKeyId?: string;
+  channelId?: string;
   provider: string;
   modelId: string;
   requestType?: string;
@@ -27,6 +28,7 @@ export async function recordConsumption(record: ConsumptionRecord) {
     userId: record.userId,
     source: record.source,
     apiKeyId: record.apiKeyId || null,
+    channelId: record.channelId || null,
     provider: record.provider,
     modelId: record.modelId,
     requestType: record.requestType,

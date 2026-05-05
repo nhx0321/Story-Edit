@@ -372,50 +372,101 @@ export const tokenRelayRouter = router({
       return { ok: true };
     }),
 
-  // 渠道详情统计（按 provider 聚合当日数据）
+  // 渠道详情统计（按 channel 聚合真实归因数据）
   getChannelDetail: adminProcedureLevel(0)
     .input(z.object({ channelId: z.string().uuid() }))
     .query(async ({ input }) => {
-      // 获取渠道信息
       const [channel] = await db.select().from(apiChannels).where(eq(apiChannels.id, input.channelId));
       if (!channel) throw new TRPCError({ code: 'NOT_FOUND', message: '渠道不存在' });
 
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
 
-      // 查询该 provider 今日所有消费日志
-      const logs = await db.select({
-        userId: tokenConsumptionLogs.userId,
-        cost: tokenConsumptionLogs.cost,
-        inputTokens: tokenConsumptionLogs.inputTokens,
-        outputTokens: tokenConsumptionLogs.outputTokens,
-        createdAt: tokenConsumptionLogs.createdAt,
+      const monthStart = new Date();
+      monthStart.setDate(1);
+      monthStart.setHours(0, 0, 0, 0);
+
+      const [todaySummary] = await db.select({
+        totalCost: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.cost}), 0)::bigint`,
+        totalRequests: sql<number>`COUNT(*)::int`,
+        totalUsers: sql<number>`COUNT(DISTINCT ${tokenConsumptionLogs.userId})::int`,
+        totalInputTokens: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.inputTokens}), 0)::bigint`,
+        totalOutputTokens: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.outputTokens}), 0)::bigint`,
       })
         .from(tokenConsumptionLogs)
         .where(and(
-          eq(tokenConsumptionLogs.provider, channel.provider),
-          sql`${tokenConsumptionLogs.createdAt} >= ${todayStart.toISOString()}`,
+          eq(tokenConsumptionLogs.channelId, channel.id),
+          sql`${tokenConsumptionLogs.createdAt} >= ${todayStart}`,
         ));
 
-      // 按小时聚合
+      const [lifetimeSummary] = await db.select({
+        lifetimeCost: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.cost}), 0)::bigint`,
+        lifetimeRequests: sql<number>`COUNT(*)::int`,
+        lifetimeUsers: sql<number>`COUNT(DISTINCT ${tokenConsumptionLogs.userId})::int`,
+        lifetimeInputTokens: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.inputTokens}), 0)::bigint`,
+        lifetimeOutputTokens: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.outputTokens}), 0)::bigint`,
+      })
+        .from(tokenConsumptionLogs)
+        .where(eq(tokenConsumptionLogs.channelId, channel.id));
+
+      const hourlyRows = await db.select({
+        hour: sql<number>`EXTRACT(HOUR FROM ${tokenConsumptionLogs.createdAt})::int`,
+        cost: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.cost}), 0)::bigint`,
+        inputTokens: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.inputTokens}), 0)::bigint`,
+        outputTokens: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.outputTokens}), 0)::bigint`,
+        count: sql<number>`COUNT(*)::int`,
+      })
+        .from(tokenConsumptionLogs)
+        .where(and(
+          eq(tokenConsumptionLogs.channelId, channel.id),
+          sql`${tokenConsumptionLogs.createdAt} >= ${todayStart}`,
+        ))
+        .groupBy(sql`EXTRACT(HOUR FROM ${tokenConsumptionLogs.createdAt})`)
+        .orderBy(sql`EXTRACT(HOUR FROM ${tokenConsumptionLogs.createdAt})`);
+
+      const userRanking = await db.select({
+        userId: tokenConsumptionLogs.userId,
+        cost: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.cost}), 0)::bigint`,
+        count: sql<number>`COUNT(*)::int`,
+        inputTokens: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.inputTokens}), 0)::bigint`,
+        outputTokens: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.outputTokens}), 0)::bigint`,
+      })
+        .from(tokenConsumptionLogs)
+        .where(and(
+          eq(tokenConsumptionLogs.channelId, channel.id),
+          sql`${tokenConsumptionLogs.createdAt} >= ${todayStart}`,
+        ))
+        .groupBy(tokenConsumptionLogs.userId)
+        .orderBy(sql`COALESCE(SUM(${tokenConsumptionLogs.cost}), 0) DESC`)
+        .limit(20);
+
+      const monthlyData = await db.select({
+        date: sql<string>`TO_CHAR(${tokenConsumptionLogs.createdAt}, 'YYYY-MM-DD')`,
+        label: sql<string>`TO_CHAR(${tokenConsumptionLogs.createdAt}, 'MM-DD')`,
+        cost: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.cost}), 0)::bigint`,
+        inputTokens: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.inputTokens}), 0)::bigint`,
+        outputTokens: sql<number>`COALESCE(SUM(${tokenConsumptionLogs.outputTokens}), 0)::bigint`,
+        count: sql<number>`COUNT(*)::int`,
+      })
+        .from(tokenConsumptionLogs)
+        .where(and(
+          eq(tokenConsumptionLogs.channelId, channel.id),
+          sql`${tokenConsumptionLogs.createdAt} >= ${monthStart}`,
+        ))
+        .groupBy(sql`DATE(${tokenConsumptionLogs.createdAt})`, sql`TO_CHAR(${tokenConsumptionLogs.createdAt}, 'YYYY-MM-DD')`, sql`TO_CHAR(${tokenConsumptionLogs.createdAt}, 'MM-DD')`)
+        .orderBy(sql`DATE(${tokenConsumptionLogs.createdAt})`);
+
       const hourlyMap: Record<number, { cost: number; inputTokens: number; outputTokens: number; count: number }> = {};
       for (let h = 0; h < 24; h++) {
         hourlyMap[h] = { cost: 0, inputTokens: 0, outputTokens: 0, count: 0 };
       }
-
-      // 按用户聚合
-      const userMap: Record<string, { cost: number; count: number }> = {};
-
-      for (const log of logs) {
-        const hour = new Date(log.createdAt).getHours();
-        hourlyMap[hour].cost += log.cost ?? 0;
-        hourlyMap[hour].inputTokens += log.inputTokens ?? 0;
-        hourlyMap[hour].outputTokens += log.outputTokens ?? 0;
-        hourlyMap[hour].count++;
-
-        if (!userMap[log.userId]) userMap[log.userId] = { cost: 0, count: 0 };
-        userMap[log.userId].cost += log.cost ?? 0;
-        userMap[log.userId].count++;
+      for (const row of hourlyRows) {
+        hourlyMap[row.hour] = {
+          cost: row.cost ?? 0,
+          inputTokens: row.inputTokens ?? 0,
+          outputTokens: row.outputTokens ?? 0,
+          count: row.count ?? 0,
+        };
       }
 
       const currentHour = new Date().getHours();
@@ -425,54 +476,23 @@ export const tokenRelayRouter = router({
         ...hourlyMap[h],
       }));
 
-      // 用户排名（按消耗降序，取前20）
-      const userRanking = Object.entries(userMap)
-        .map(([userId, data]) => ({ userId, ...data }))
-        .sort((a, b) => b.cost - a.cost)
-        .slice(0, 20);
-
-      const totalCost = logs.reduce((s, l) => s + (l.cost ?? 0), 0);
-
-      // 月度统计（当月按天聚合）
-      const monthStart = new Date();
-      monthStart.setDate(1);
-      monthStart.setHours(0, 0, 0, 0);
-
-      const monthLogs = await db.select({
-        cost: tokenConsumptionLogs.cost,
-        inputTokens: tokenConsumptionLogs.inputTokens,
-        outputTokens: tokenConsumptionLogs.outputTokens,
-        createdAt: tokenConsumptionLogs.createdAt,
-      })
-        .from(tokenConsumptionLogs)
-        .where(and(
-          eq(tokenConsumptionLogs.provider, channel.provider),
-          sql`${tokenConsumptionLogs.createdAt} >= ${monthStart.toISOString()}`,
-        ));
-
-      const dailyMap: Record<string, { cost: number; inputTokens: number; outputTokens: number; count: number }> = {};
-      for (const log of monthLogs) {
-        const day = new Date(log.createdAt).toISOString().slice(0, 10);
-        if (!dailyMap[day]) dailyMap[day] = { cost: 0, inputTokens: 0, outputTokens: 0, count: 0 };
-        dailyMap[day].cost += log.cost ?? 0;
-        dailyMap[day].inputTokens += log.inputTokens ?? 0;
-        dailyMap[day].outputTokens += log.outputTokens ?? 0;
-        dailyMap[day].count++;
-      }
-
-      const monthlyData = Object.entries(dailyMap)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([date, data]) => ({ date, label: date.slice(5), ...data }));
-
-      const monthTotalCost = monthLogs.reduce((s, l) => s + (l.cost ?? 0), 0);
-      const monthTotalRequests = monthLogs.length;
+      const monthTotalCost = monthlyData.reduce((sum, item) => sum + (item.cost ?? 0), 0);
+      const monthTotalRequests = monthlyData.reduce((sum, item) => sum + (item.count ?? 0), 0);
 
       return {
         channel,
         hourlyData,
         userRanking,
-        totalCost,
-        totalRequests: logs.length,
+        totalCost: todaySummary?.totalCost ?? 0,
+        totalRequests: todaySummary?.totalRequests ?? 0,
+        totalUsers: todaySummary?.totalUsers ?? 0,
+        totalInputTokens: todaySummary?.totalInputTokens ?? 0,
+        totalOutputTokens: todaySummary?.totalOutputTokens ?? 0,
+        lifetimeCost: lifetimeSummary?.lifetimeCost ?? 0,
+        lifetimeRequests: lifetimeSummary?.lifetimeRequests ?? 0,
+        lifetimeUsers: lifetimeSummary?.lifetimeUsers ?? 0,
+        lifetimeInputTokens: lifetimeSummary?.lifetimeInputTokens ?? 0,
+        lifetimeOutputTokens: lifetimeSummary?.lifetimeOutputTokens ?? 0,
         monthlyData,
         monthTotalCost,
         monthTotalRequests,

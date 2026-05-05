@@ -789,6 +789,7 @@ export const tokenConsumptionLogs = pgTable('token_consumption_logs', {
   userId: uuid('user_id').notNull().references(() => users.id),
   source: varchar('source', { length: 20 }).notNull(),
   apiKeyId: uuid('api_key_id'),
+  channelId: uuid('channel_id').references(() => apiChannels.id),
   provider: varchar('provider', { length: 50 }).notNull(),
   modelId: varchar('model_id', { length: 100 }).notNull(),
   requestType: varchar('request_type', { length: 50 }),

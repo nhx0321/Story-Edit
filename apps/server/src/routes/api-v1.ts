@@ -49,6 +49,8 @@ function isIpAllowed(ipWhitelist: string[] | null, ip: string) {
   return ipWhitelist.includes(ip);
 }
 
+const SLOW_RESPONSE_STREAM_FALLBACK_MS = channelManager.SLOW_RESPONSE_THRESHOLD_MS;
+
 export async function registerExternalApiRoute(app: FastifyInstance) {
   // 非流式
   app.post<{ Body: ChatCompletionRequest }>('/api/v1/chat/completions', async (request, reply) => {
@@ -159,6 +161,7 @@ async function handleNonStream(
   const role = await tokenBilling.getUserRole(keyRecord.userId);
   const userTier = role === 'paid' || role === 'admin' ? 'vip' : 'free';
   const channel = await channelManager.selectChannel(provider, userTier, { excludeIds: [] });
+  const requestId = randomUUID();
   if (!channel) {
     await tokenBilling.refundIntent(keyRecord.userId, estimatedCost);
     return reply.status(503).send({ error: { message: '暂无可用AI渠道', type: 'server_error' } });
@@ -171,6 +174,8 @@ async function handleNonStream(
     defaultModel: modelId,
   });
 
+  const startedAt = Date.now();
+
   try {
     const result = await adapter.chat(body.messages as AIMessage[], {
       model: modelId,
@@ -179,6 +184,8 @@ async function handleNonStream(
     });
 
     const usage = result.usage || { promptTokens: 0, completionTokens: 0 };
+    const elapsedMs = Date.now() - startedAt;
+    await channelManager.recordSuccessfulChannelResponse(channel.id, elapsedMs);
     const hasUsage = usage.promptTokens > 0 || usage.completionTokens > 0;
     const billedInputTokens = hasUsage ? usage.promptTokens : estimatedInput;
     const billedOutputTokens = hasUsage ? usage.completionTokens : estimatedOutput;
@@ -193,12 +200,14 @@ async function handleNonStream(
       userId: keyRecord.userId,
       source: 'external_api',
       apiKeyId: keyRecord.id,
+      channelId: channel.id,
       provider,
       modelId,
       requestType: 'chat',
       inputTokens: billedInputTokens,
       outputTokens: billedOutputTokens,
       cost: finalCost,
+      requestId,
     });
 
     const responseId = `chatcmpl-${randomUUID().slice(0, 8)}`;
@@ -276,6 +285,7 @@ async function handleStream(
   const role = await tokenBilling.getUserRole(keyRecord.userId);
   const userTier = role === 'paid' || role === 'admin' ? 'vip' : 'free';
   const channel = await channelManager.selectChannel(provider, userTier, { excludeIds: [] });
+  const requestId = randomUUID();
   if (!channel) {
     await tokenBilling.refundIntent(keyRecord.userId, estimatedCost);
     return reply.status(503).send({ error: { message: '暂无可用AI渠道', type: 'server_error' } });
@@ -287,6 +297,8 @@ async function handleStream(
     baseUrl: channel.baseUrl || undefined,
     defaultModel: modelId,
   });
+
+  const startedAt = Date.now();
 
   reply.raw.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -303,6 +315,7 @@ async function handleStream(
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   let hasError = false;
+  let firstChunkElapsedMs = 0;
 
   try {
     const stream = adapter.chatStream(body.messages as AIMessage[], {
@@ -312,6 +325,9 @@ async function handleStream(
     });
 
     for await (const chunk of stream) {
+      if (!firstChunkElapsedMs) {
+        firstChunkElapsedMs = Date.now() - startedAt;
+      }
       if (chunk.done) {
         if (chunk.usage) {
           totalInputTokens = chunk.usage.promptTokens;
@@ -366,6 +382,10 @@ async function handleStream(
   }
 
   // 结算
+  if (!hasError) {
+    await channelManager.recordSuccessfulChannelResponse(channel.id, firstChunkElapsedMs || SLOW_RESPONSE_STREAM_FALLBACK_MS);
+  }
+
   if (!hasError && (totalInputTokens > 0 || totalOutputTokens > 0)) {
     const { finalCost } = await tokenBilling.finalizeCharge(
       keyRecord.userId, estimatedCost,
@@ -378,12 +398,14 @@ async function handleStream(
       userId: keyRecord.userId,
       source: 'external_api',
       apiKeyId: keyRecord.id,
+      channelId: channel.id,
       provider,
       modelId,
       requestType: 'chat',
       inputTokens: totalInputTokens,
       outputTokens: totalOutputTokens,
       cost: finalCost,
+      requestId,
     });
   } else if (!hasError) {
     const { finalCost } = await tokenBilling.finalizeCharge(
@@ -397,12 +419,14 @@ async function handleStream(
       userId: keyRecord.userId,
       source: 'external_api',
       apiKeyId: keyRecord.id,
+      channelId: channel.id,
       provider,
       modelId,
       requestType: 'chat',
       inputTokens: estimatedInput,
       outputTokens: estimatedOutput,
       cost: finalCost,
+      requestId,
     });
   }
 

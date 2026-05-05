@@ -22,6 +22,8 @@ export interface ChannelInfo {
 const BASE_COOLDOWN_MS = 5 * 1000; // 首次5秒
 const MAX_COOLDOWN_MS = 5 * 60 * 1000; // 上限5分钟
 const QUOTA_COOLDOWN_MS = 30 * 60 * 1000; // 上游账户额度不足时冷却30分钟，优先切其他账户
+export const SLOW_RESPONSE_THRESHOLD_MS = 45_000;
+export const SLOW_CHANNEL_ERROR_MESSAGE = 'slow_response';
 
 // 渠道连续错误计数（内存中维护，重置在成功调用时）
 const channelErrorCounts = new Map<string, number>();
@@ -203,6 +205,22 @@ export async function markChannelError(channelId: string, errorMessage: string):
 }
 
 /**
+ * 标记渠道慢响应 — 复用现有错误冷却窗口，但不跨模型切换
+ */
+export async function markChannelSlow(channelId: string, elapsedMs: number): Promise<void> {
+  await markChannelError(channelId, `${SLOW_CHANNEL_ERROR_MESSAGE}:${elapsedMs}`);
+}
+
+export async function recordSuccessfulChannelResponse(channelId: string, elapsedMs: number): Promise<void> {
+  if (elapsedMs >= SLOW_RESPONSE_THRESHOLD_MS) {
+    await markChannelSlow(channelId, elapsedMs);
+    return;
+  }
+
+  await clearChannelError(channelId);
+}
+
+/**
  * 清除渠道错误状态 — 调用成功后重置连续错误计数
  */
 export async function clearChannelError(channelId: string): Promise<void> {
@@ -293,7 +311,7 @@ export async function getChannelStats(provider?: string): Promise<{
     if ((ch.dailyUsed ?? 0) >= (ch.dailyLimit ?? 0)) stats.exhausted++;
     if (ch.lastErrorAt) {
       const errors = channelErrorCounts.get(ch.id) ?? 1;
-      const cooldownEnd = new Date(ch.lastErrorAt.getTime() + getCooldown(errors));
+      const cooldownEnd = new Date(ch.lastErrorAt.getTime() + getCooldown(errors, ch.lastErrorMessage));
       if (now < cooldownEnd) stats.cooling++;
     }
   }

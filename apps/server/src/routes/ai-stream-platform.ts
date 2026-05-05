@@ -1,6 +1,7 @@
 // API代理转发 — 站内AI调用走平台Token渠道
 import type { FastifyInstance } from 'fastify';
 import { eq, and } from 'drizzle-orm';
+import { randomUUID } from 'crypto';
 import { db } from '../db';
 import { aiConfigs, apiChannels, users } from '../db/schema';
 import { verifyToken } from '../services/auth/utils';
@@ -58,9 +59,9 @@ async function streamWithPlatformToken(
   await tokenBilling.ensureAccount(userId);
 
   // 2.5 速率限制
-  const roleForRateLimit = await tokenBilling.getUserRole(userId);
-  const userTierRL = roleForRateLimit === 'paid' || roleForRateLimit === 'admin' ? 'vip' : 'free';
-  const rl = await rateLimiter.checkUserChatRate(userId, userTierRL);
+  const role = await tokenBilling.getUserRole(userId);
+  const userTier = role === 'paid' || role === 'admin' ? 'vip' : 'free';
+  const rl = await rateLimiter.checkUserChatRate(userId, userTier);
   if (!rl.allowed) {
     throw new Error(`请求过于频繁，请${Math.ceil((rl.resetAt.getTime() - Date.now()) / 1000)}秒后重试`);
   }
@@ -100,11 +101,9 @@ async function streamWithPlatformToken(
   }
 
   // 4. 选择上游渠道 + 同provider内重试（取消降级机制，始终使用用户选择的模型）
-  const roleForRouting = await tokenBilling.getUserRole(userId);
-  const userTier = roleForRouting === 'paid' || roleForRouting === 'admin' ? 'vip' : 'free';
-
-  const maxAttempts = 3;
+  const maxAttempts = MAX_CHANNEL_ATTEMPTS;
   const attemptedChannelIds = new Set<string>();
+  const requestId = randomUUID();
   let channel = await channelManager.selectChannel(modelProvider, userTier, { excludeIds: [] });
   app.log.info(`Initial channel selected: ${channel?.name || 'none'} (provider=${modelProvider}, userTier=${userTier})`);
   let usedChannel = channel;
@@ -117,6 +116,7 @@ async function streamWithPlatformToken(
     if (!channel) break;
     attemptedChannelIds.add(channel.id);
 
+    const attemptStartAt = Date.now();
     const actualProvider = channel.provider;
     const channelApiKey = decryptChannelKey(channel.apiKeyEncrypted);
 
@@ -140,6 +140,7 @@ async function streamWithPlatformToken(
 
       // 尝试获取第一个 chunk（失败则重试下一个渠道，此时 SSE 头尚未发送）
       const firstResult = await iterator.next();
+      const firstChunkElapsedMs = Date.now() - attemptStartAt;
       clearTimeout(attemptTimeoutId);
 
       // 第一个 chunk 成功 — 发送 SSE 响应头
@@ -182,8 +183,8 @@ async function streamWithPlatformToken(
         streamSuccess = true;
         usedChannel = channel;
 
-        // 调用成功：清除渠道错误状态（重置增量退避计数）
-        await channelManager.clearChannelError(channel.id);
+        // 首包过慢：纳入现有冷却体系，仅影响同模型请求下的备用渠道切换
+        await channelManager.recordSuccessfulChannelResponse(channel.id, firstChunkElapsedMs);
       } catch (midErr: unknown) {
         // 流中途错误 — SSE 已开始，无法切换渠道
         app.log.error({ err: midErr }, 'Mid-stream error on channel ' + channel.id);
@@ -267,12 +268,14 @@ async function streamWithPlatformToken(
     await consumptionTracker.recordConsumption({
       userId,
       source: 'in_app',
+      channelId: usedChannel?.id,
       provider: usedChannel?.provider || modelProvider,
       modelId,
       requestType: 'chat',
       inputTokens: totalInputTokens,
       outputTokens: totalOutputTokens,
       cost: finalCost,
+      requestId,
       projectId,
       conversationId,
     });
@@ -287,12 +290,14 @@ async function streamWithPlatformToken(
     await consumptionTracker.recordConsumption({
       userId,
       source: 'in_app',
+      channelId: usedChannel?.id,
       provider: usedChannel?.provider || modelProvider,
       modelId,
       requestType: 'chat',
       inputTokens: estimatedInputTokens,
       outputTokens: estimatedOutputTokens,
       cost: finalCost,
+      requestId,
       projectId,
       conversationId,
     });
@@ -456,6 +461,8 @@ export async function registerChannelTestRoute(app: FastifyInstance) {
 }
 
 // ========== Helpers ==========
+
+const MAX_CHANNEL_ATTEMPTS = 3;
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
