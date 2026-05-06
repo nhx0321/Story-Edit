@@ -345,8 +345,11 @@ export function ChatPanel({
         const defaultConfig = configs.find(c => c.isDefault);
         return defaultConfig?.id || configs[0].id;
       });
+    } else if (platformModels.length > 0) {
+      // No user configs but platform models available — use a synthetic config id to unblock conversation creation
+      setSelectedConfigId(prev => prev || 'platform');
     }
-  }, [configs, activeAgent, preferredModelId]);
+  }, [configs, activeAgent, preferredModelId, platformModels]);
 
   // 获取项目大纲上下文
   const { data: volumeList } = trpc.project.listVolumes.useQuery(
