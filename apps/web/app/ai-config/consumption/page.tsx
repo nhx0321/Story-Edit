@@ -1,16 +1,30 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useMemo } from 'react';
 import { trpc } from '@/lib/trpc';
 
-function BarChart({ data }: { data: { label: string; value: number; color?: string }[] }) {
+type BarDatum = {
+  label: string;
+  value: number;
+  color?: string;
+  topLabel?: string;
+  title?: string;
+};
+
+function formatCompactTokens(value: number) {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)}K`;
+  return value.toString();
+}
+
+function BarChart({ data }: { data: BarDatum[] }) {
   const maxVal = Math.max(...data.map(d => d.value), 1);
   return (
-    <div className="flex items-end gap-1 h-48">
+    <div className="flex items-end gap-2 h-56">
       {data.map((d, i) => (
         <div key={i} className="flex-1 flex flex-col items-center gap-1 min-w-0">
-          <span className="text-xs text-gray-500 font-medium">
-            {d.value > 0 ? (d.value / 1000).toFixed(0) + 'K' : '0'}
+          <span className="text-xs text-gray-500 font-medium text-center leading-tight">
+            {d.topLabel ?? (d.value > 0 ? formatCompactTokens(d.value) : '0')}
           </span>
           <div
             className="w-full rounded-t-md transition-all hover:opacity-80 min-h-[4px]"
@@ -18,9 +32,9 @@ function BarChart({ data }: { data: { label: string; value: number; color?: stri
               height: `${Math.max((d.value / maxVal) * 140, 4)}px`,
               backgroundColor: d.color || '#1f2937',
             }}
-            title={`${d.label}: ${d.value.toLocaleString()} tokens`}
+            title={d.title || `${d.label}: ${d.value.toLocaleString()} Token`}
           />
-          <span className="text-xs text-gray-400 truncate w-full text-center">{d.label}</span>
+          <span className="text-xs text-gray-400 truncate w-full text-center" title={d.label}>{d.label}</span>
         </div>
       ))}
     </div>
@@ -28,56 +42,36 @@ function BarChart({ data }: { data: { label: string; value: number; color?: stri
 }
 
 export default function AIConfigConsumptionPage() {
-  // Query today's data only (from 00:00 to now)
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+  const { data: stats, isLoading, refetch } = trpc.token.getConsumptionStats.useQuery();
 
-  const { data: logs, isLoading, refetch } = trpc.token.getConsumption.useQuery({
-    limit: 10000,
-    startDate: todayStart.toISOString(),
-  });
+  const modelRows = useMemo(() => {
+    return Object.entries(stats?.byModel ?? {})
+      .filter(([, item]) => (item.todayTokens ?? 0) > 0)
+      .sort((a, b) => (b[1].todayTokens ?? 0) - (a[1].todayTokens ?? 0));
+  }, [stats?.byModel]);
 
-  // Aggregate by hour for today
-  const hourlyData = useMemo(() => {
-    if (!logs || logs.length === 0) return [];
-    const byHour: Record<number, { tokens: number; inputTokens: number; outputTokens: number; cost: number }> = {};
-    // Initialize all 24 hours
-    for (let h = 0; h < 24; h++) {
-      byHour[h] = { tokens: 0, inputTokens: 0, outputTokens: 0, cost: 0 };
-    }
-    for (const log of logs as any[]) {
-      const d = new Date(log.createdAt);
-      const hour = d.getHours();
-      byHour[hour].tokens += (log.inputTokens ?? 0) + (log.outputTokens ?? 0);
-      byHour[hour].inputTokens += (log.inputTokens ?? 0);
-      byHour[hour].outputTokens += (log.outputTokens ?? 0);
-      byHour[hour].cost += (log.cost ?? 0);
-    }
-    const currentHour = new Date().getHours();
-    return Array.from({ length: currentHour + 1 }, (_, h) => ({
-      hour: h,
-      label: `${h}:00`,
-      ...byHour[h],
-    }));
-  }, [logs]);
+  const totalTokens = stats?.todayTokens ?? 0;
+  const totalInput = stats?.todayInput ?? 0;
+  const totalOutput = stats?.todayOutput ?? 0;
 
-  const toTokens = (units: number) => Math.round(units / 10_000_000 * 1_000_000);
-
-  const barData = hourlyData.map(m => ({ label: m.label, value: m.tokens }));
-  const inputBarData = hourlyData.map(m => ({ label: m.label, value: m.inputTokens, color: '#3b82f6' }));
-  const outputBarData = hourlyData.map(m => ({ label: m.label, value: m.outputTokens, color: '#10b981' }));
-
-  const totalTokens = hourlyData.reduce((s, m) => s + m.tokens, 0);
-  const totalInput = hourlyData.reduce((s, m) => s + m.inputTokens, 0);
-  const totalOutput = hourlyData.reduce((s, m) => s + m.outputTokens, 0);
-  const totalCost = hourlyData.reduce((s, m) => s + m.cost, 0);
+  const modelBarData = useMemo(() => {
+    return modelRows.map(([key, item]) => {
+      const pct = totalTokens > 0 ? ((item.todayTokens ?? 0) / totalTokens) * 100 : 0;
+      return {
+        label: key,
+        value: item.todayTokens ?? 0,
+        topLabel: `${pct.toFixed(1)}% · ${formatCompactTokens(item.todayTokens ?? 0)}`,
+        title: `${key}\n今日总消耗：${(item.todayTokens ?? 0).toLocaleString()} Token\n输入：${(item.todayInput ?? 0).toLocaleString()} Token\n输出：${(item.todayOutput ?? 0).toLocaleString()} Token\n调用：${(item.todayCallCount ?? 0).toLocaleString()} 次\n占比：${pct.toFixed(2)}%`,
+      };
+    });
+  }, [modelRows, totalTokens]);
 
   const handleRefresh = () => {
     refetch();
   };
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold">站内用量统计</h1>
@@ -98,69 +92,55 @@ export default function AIConfigConsumptionPage() {
         <div className="text-center py-16 text-gray-400">加载中...</div>
       ) : (
         <>
-          {/* 当日概览 */}
-          <div className="grid grid-cols-3 gap-4 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
             <div className="bg-white rounded-xl border border-gray-200 p-4">
               <p className="text-xs text-gray-400 mb-1">当日总用量</p>
-              <p className="text-xl font-bold">{totalTokens > 0 ? (totalTokens / 1000).toFixed(0) + 'K' : '0'} tokens</p>
+              <p className="text-xl font-bold">{totalTokens.toLocaleString()} Token</p>
             </div>
             <div className="bg-white rounded-xl border border-gray-200 p-4">
               <p className="text-xs text-gray-400 mb-1">当日输入</p>
-              <p className="text-xl font-bold text-blue-600">{totalInput > 0 ? (totalInput / 1000).toFixed(0) + 'K' : '0'} tokens</p>
+              <p className="text-xl font-bold text-blue-600">{totalInput.toLocaleString()} Token</p>
             </div>
             <div className="bg-white rounded-xl border border-gray-200 p-4">
               <p className="text-xs text-gray-400 mb-1">当日输出</p>
-              <p className="text-xl font-bold text-emerald-600">{totalOutput > 0 ? (totalOutput / 1000).toFixed(0) + 'K' : '0'} tokens</p>
+              <p className="text-xl font-bold text-emerald-600">{totalOutput.toLocaleString()} Token</p>
             </div>
           </div>
 
-          {/* 每小时用量柱状图 */}
-          {hourlyData.length > 0 && totalTokens > 0 ? (
+          {modelBarData.length > 0 ? (
             <>
               <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
-                <h2 className="text-sm font-medium mb-4">当日每小时用量</h2>
-                <BarChart data={barData} />
+                <h2 className="text-sm font-medium mb-2">今日各模型消耗占比</h2>
+                <p className="text-xs text-gray-400 mb-4">柱顶显示“占比 + 消耗量”，鼠标移到柱体上可查看输入、输出与调用次数</p>
+                <BarChart data={modelBarData} />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                <div className="bg-white rounded-xl border border-gray-200 p-5">
-                  <h2 className="text-sm font-medium mb-4 flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
-                    输入 Token
-                  </h2>
-                  <BarChart data={inputBarData} />
-                </div>
-                <div className="bg-white rounded-xl border border-gray-200 p-5">
-                  <h2 className="text-sm font-medium mb-4 flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                    输出 Token
-                  </h2>
-                  <BarChart data={outputBarData} />
-                </div>
-              </div>
-
-              {/* 每小时明细表 */}
               <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 border-b border-gray-200">
                     <tr>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">时段</th>
+                      <th className="px-4 py-3 text-left font-medium text-gray-500">模型</th>
                       <th className="px-4 py-3 text-right font-medium text-gray-500">输入 Token</th>
                       <th className="px-4 py-3 text-right font-medium text-gray-500">输出 Token</th>
                       <th className="px-4 py-3 text-right font-medium text-gray-500">合计</th>
-                      <th className="px-4 py-3 text-right font-medium text-gray-500">费用</th>
+                      <th className="px-4 py-3 text-right font-medium text-gray-500">占比</th>
+                      <th className="px-4 py-3 text-right font-medium text-gray-500">调用次数</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {hourlyData.filter(m => m.tokens > 0).map(m => (
-                      <tr key={m.hour} className="border-b border-gray-100 hover:bg-gray-50">
-                        <td className="px-4 py-3 font-medium text-gray-700">{m.label}</td>
-                        <td className="px-4 py-3 text-right text-gray-600">{m.inputTokens.toLocaleString()}</td>
-                        <td className="px-4 py-3 text-right text-gray-600">{m.outputTokens.toLocaleString()}</td>
-                        <td className="px-4 py-3 text-right font-medium">{m.tokens.toLocaleString()}</td>
-                        <td className="px-4 py-3 text-right text-gray-700">~{toTokens(m.cost).toLocaleString()}</td>
-                      </tr>
-                    ))}
+                    {modelRows.map(([key, item]) => {
+                      const pct = totalTokens > 0 ? ((item.todayTokens ?? 0) / totalTokens) * 100 : 0;
+                      return (
+                        <tr key={key} className="border-b border-gray-100 hover:bg-gray-50">
+                          <td className="px-4 py-3 font-medium text-gray-700">{key}</td>
+                          <td className="px-4 py-3 text-right text-gray-600">{(item.todayInput ?? 0).toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right text-gray-600">{(item.todayOutput ?? 0).toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right font-medium">{(item.todayTokens ?? 0).toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right text-gray-600">{pct.toFixed(2)}%</td>
+                          <td className="px-4 py-3 text-right text-gray-600">{(item.todayCallCount ?? 0).toLocaleString()}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

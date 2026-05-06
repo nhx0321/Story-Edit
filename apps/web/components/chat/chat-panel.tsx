@@ -322,6 +322,12 @@ export function ChatPanel({
     if (!modelId) return '';
     return modelNameMap.get(modelId) || modelId;
   }, [modelNameMap]);
+  const getModelFullDisplayName = useCallback((modelId?: string | null) => {
+    if (!modelId) return '';
+    const displayName = modelNameMap.get(modelId);
+    if (!displayName || displayName === modelId) return modelId;
+    return `${displayName}（${modelId}）`;
+  }, [modelNameMap]);
 
   // Update selected config when configs/preferred model load — prefer the config matching current preferred model
   useEffect(() => {
@@ -928,6 +934,9 @@ export function ChatPanel({
     experiences: currentRoleKey === 'writer' ? experienceContext : undefined,
     projectSettings: currentRoleKey === 'editor' ? projectSettings : undefined,
   });
+  const headerTitle = title || 'AI 对话';
+  const currentConversationModelLabel = convModelId ? getModelFullDisplayName(convModelId) : '';
+  const panelTitle = currentConversationModelLabel ? `${headerTitle} · ${currentConversationModelLabel}` : headerTitle;
 
   // 新消息到达时自动滚动到底部 + 刷新滚动按钮状态
   useEffect(() => {
@@ -1175,7 +1184,7 @@ export function ChatPanel({
     }
   };
 
-  const noConfig = open && configs && configs.length === 0;
+  const noConfig = open && configs && configs.length === 0 && platformModels.length === 0;
   const isLoading = !conversationId && !noConfig;
 
   // 可拖拽调整对话框宽度
@@ -1213,7 +1222,7 @@ export function ChatPanel({
         style={mode === 'inline' ? { position: 'fixed', right: '0', top: '50%', transform: 'translateY(-50%)' } : {}}>
         <div className="bg-white rounded-l-2xl shadow-xl border border-r-0 border-gray-200 w-[200px]" style={{ height: `min(700px, calc(100vh - 80px))` }}>
           <div className="px-4 py-3 border-b border-gray-100">
-            <p className="text-sm font-semibold text-gray-900">{minimizedTitle || title || 'AI 对话'}</p>
+            <p className="text-sm font-semibold text-gray-900">{minimizedTitle || panelTitle}</p>
             <p className="text-xs text-gray-400 mt-0.5">最小化中</p>
           </div>
           <div className="p-3">
@@ -1252,7 +1261,7 @@ export function ChatPanel({
             <div className="flex-1 flex items-center justify-center p-6">
               <div className="text-center">
                 <p className="text-sm text-gray-500 mb-2">请先配置 AI 模型</p>
-                <a href="/settings/ai" className="text-sm text-blue-600 hover:underline">前往设置</a>
+                <a href="/ai-config/my-models" className="text-sm text-blue-600 hover:underline">前往设置</a>
               </div>
             </div>
           ) : isLoading ? (
@@ -1266,7 +1275,7 @@ export function ChatPanel({
             {/* 标题栏 */}
             <div className="px-4 py-2 border-b border-gray-100">
               <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-gray-900">{title || 'AI 对话'}</h2>
+                <h2 className="text-sm font-semibold text-gray-900">{panelTitle}</h2>
                 <div className="flex items-center gap-1">
                   {/* 最小化按钮 — 黑底白字 */}
                   <button
@@ -1342,6 +1351,7 @@ export function ChatPanel({
 
           {/* Token用量提示条（免费用户接近限额时显示） */}
           {tokenAccount && tokenAccount.dailyUsed != null && tokenAccount.dailyLimit != null && (() => {
+            if (tokenAccount.dailyLimit === 0) return null;
             const pct = tokenAccount.dailyLimit > 0 ? Math.round((tokenAccount.dailyUsed / tokenAccount.dailyLimit) * 100) : 0;
             if (pct < 50) return null; // 低于50%不显示
             return (

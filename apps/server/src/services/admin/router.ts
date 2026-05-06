@@ -1,6 +1,6 @@
 // 管理后台 tRPC 路由
 import { z } from 'zod';
-import { eq, and, desc, ilike, or, sql, count, inArray } from 'drizzle-orm';
+import { eq, and, desc, ilike, or, sql, count, inArray, isNull, not } from 'drizzle-orm';
 import { TRPCError } from '@trpc/server';
 import { router, adminProcedure, adminProcedureLevel, protectedProcedure } from '../../trpc';
 import { db } from '../../db';
@@ -10,6 +10,8 @@ import {
 } from '../../db/schema';
 import * as artAssetService from './art-assets';
 import { recordBeanTransaction } from '../sprite/bean-service';
+
+const DELETED_USER_NICKNAME = '已删除用户';
 
 // ========== 辅助函数：记录操作日志 ==========
 async function logAudit(input: {
@@ -100,9 +102,11 @@ export const adminRouter = router({
       return {
         users: userList.map(u => {
           const sub = subMap.get(u.id);
+          const isDeleted = u.nickname === DELETED_USER_NICKNAME && !u.email && !u.phone;
           return {
             ...u,
             subStatus: sub?.status || null,
+            isDeleted,
           };
         }),
         total: totalResult?.count || 0,
@@ -297,21 +301,61 @@ export const adminRouter = router({
 
   // 删除用户
   deleteUser: adminProcedureLevel(1)
-    .input(z.object({ userId: z.string().uuid() }))
+    .input(z.object({
+      userId: z.string().uuid(),
+      hardDelete: z.boolean().optional(),
+    }))
     .mutation(async ({ ctx, input }) => {
       const adminLevel = (ctx as any).adminLevel;
 
-      const [targetUser] = await db.select({ id: users.id, isAdmin: users.isAdmin })
+      const [targetUser] = await db.select({ id: users.id, isAdmin: users.isAdmin, nickname: users.nickname, email: users.email, phone: users.phone })
         .from(users).where(eq(users.id, input.userId));
       if (!targetUser) throw new TRPCError({ code: 'NOT_FOUND', message: '用户不存在' });
       if (targetUser.isAdmin) throw new TRPCError({ code: 'BAD_REQUEST', message: '不能删除管理员账号' });
 
-      // 软删除：清空用户数据
+      if (input.hardDelete) {
+        const isSoftDeleted = targetUser.nickname === DELETED_USER_NICKNAME && !targetUser.email && !targetUser.phone;
+        if (!isSoftDeleted) {
+          throw new TRPCError({ code: 'BAD_REQUEST', message: '请先执行删除账号，再进行彻底删除' });
+        }
+
+        await db.transaction(async (tx) => {
+          await tx.delete(userTokenAccounts).where(eq(userTokenAccounts.userId, input.userId));
+          await tx.delete(userSprites).where(eq(userSprites.userId, input.userId));
+          await tx.update(users)
+            .set({
+              inviteCode: null,
+              referredByCode: null,
+              displayId: null,
+              userRole: 'free',
+              bannedFromPublish: false,
+              bannedFromPayment: false,
+              trialDaysEarned: 0,
+              lastCheckinAt: null,
+              checkinStreak: 0,
+              lastActiveAt: null,
+              updatedAt: new Date(),
+            })
+            .where(eq(users.id, input.userId));
+        });
+
+        await logAudit({
+          adminId: ctx.userId,
+          adminLevel,
+          action: 'hard_delete_user',
+          targetType: 'user',
+          targetId: input.userId,
+        });
+
+        return { ok: true };
+      }
+
       await db.update(users).set({
-        nickname: '已删除用户',
+        nickname: DELETED_USER_NICKNAME,
         email: null,
         phone: null,
         avatarUrl: null,
+        updatedAt: new Date(),
       }).where(eq(users.id, input.userId));
 
       await logAudit({

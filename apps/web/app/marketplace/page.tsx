@@ -10,6 +10,24 @@ type SortBy = 'hot' | 'rating' | 'price' | 'newest';
 type TabKey = 'all' | 'views' | 'purchases';
 type AiRoleFilter = 'all' | 'editor' | 'setting_editor' | 'writer';
 
+type MarketplaceItem = {
+  id: string;
+  title: string;
+  description?: string | null;
+  source: string;
+  category?: string | null;
+  price: number | null;
+  viewCount: number | null;
+  importCount: number | null;
+  avgRating?: number;
+  ratingCount?: number;
+  aiTargetRole?: string | null;
+  uploader?: { id: string; nickname: string | null; displayId: string | null; avatarUrl: string | null; vipLevel?: string } | null;
+  purchasePrice?: number | null;
+  purchasedAt?: Date | string | null;
+  ratedAt?: Date | string | null;
+};
+
 const AI_ROLE_LABELS: Record<string, string> = {
   editor: '文学编辑',
   setting_editor: '设定编辑',
@@ -66,7 +84,7 @@ export default function MarketplacePage() {
   // AI 角色过滤（客户端过滤）
   const roleFilteredItems = aiRoleFilter === 'all'
     ? displayItems
-    : displayItems.filter(item => (item as any).aiTargetRole === aiRoleFilter);
+    : (displayItems as MarketplaceItem[]).filter(item => item.aiTargetRole === aiRoleFilter);
 
   const loading = activeTab === 'all'
     ? (useSearch ? searchLoading : isLoading)
@@ -246,15 +264,7 @@ export default function MarketplacePage() {
 }
 
 function TemplateCard({ item, showImport, onImport }: {
-  item: {
-    id: string; title: string; description?: string | null; source: string;
-    category?: string | null; price: number | null; viewCount: number | null; importCount: number | null;
-    avgRating?: number; ratingCount?: number;
-    aiTargetRole?: string | null;
-    uploader?: { id: string; nickname: string | null; displayId: string | null; avatarUrl: string | null; vipLevel?: string } | null;
-    purchasePrice?: number | null; purchasedAt?: Date | string | null;
-    ratedAt?: Date | string | null;
-  };
+  item: MarketplaceItem;
   showImport?: boolean;
   onImport?: () => void;
 }) {

@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation';
 import { trpc } from '@/lib/trpc';
 import { useWorkflowProgress } from '@/lib/use-workflow-progress';
 import { ProjectSidebar } from '@/components/layout/project-sidebar';
-import { streamAiChat } from '@/lib/ai-stream';
+import { streamPlatformAiChat } from '@/lib/ai-stream';
 
 const AGENT_ICONS: Record<string, string> = {
   editor: '📝',
@@ -28,7 +28,7 @@ export default function AgentSkillsPage() {
   const { data: agentPrompts, isLoading } = trpc.conversation.getAgentPrompts.useQuery(
     { projectId },
   );
-  const { data: configs } = trpc.ai.listConfigs.useQuery(undefined);
+  const { data: preferredModelData } = trpc.token.getPreferredModel.useQuery(undefined);
   const utils = trpc.useUtils();
   const isPremium = true; // 取消免费/VIP 限制，全部功能开放
 
@@ -81,10 +81,6 @@ export default function AgentSkillsPage() {
 
   const handleAiRefine = async () => {
     if (!editingAgent || !aiRefineInput || !agentPrompts) return;
-    if (!configs || configs.length === 0) {
-      setAiRefineOutput('请先配置 AI 模型');
-      return;
-    }
     const agent = agentPrompts.find(a => a.roleKey === editingAgent);
     if (!agent) return;
 
@@ -100,8 +96,8 @@ export default function AgentSkillsPage() {
       });
 
       let fullOutput = '';
-      for await (const chunk of streamAiChat({
-        configId: configs[0].id,
+      for await (const chunk of streamPlatformAiChat({
+        model: preferredModelData?.preferredModel || 'longcat/LongCat-Flash-Thinking-2601',
         messages: [
           { role: 'system', content: refineResult.systemMessage },
           { role: 'user', content: refineResult.userMessage },

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { trpc } from '@/lib/trpc';
-import { streamAiChat } from '@/lib/ai-stream';
+import { streamPlatformAiChat } from '@/lib/ai-stream';
 
 interface WorkflowPanelProps {
   chapterId: string;
@@ -26,8 +26,8 @@ export function WorkflowPanel({ chapterId, projectId, open, onClose, taskBrief, 
   const [summarySaving, setSummarySaving] = useState(false);
   const [showUnitSummary, setShowUnitSummary] = useState(false);
 
-  // Get user's AI configs for self-check
-  const { data: configs } = trpc.ai.listConfigs.useQuery(undefined, { enabled: open && activeTab === 'checklist' });
+  // Get user's preferred model for self-check
+  const { data: preferredModelData } = trpc.token.getPreferredModel.useQuery(undefined, { enabled: open && activeTab === 'checklist' });
 
   // Fall back to API query if taskBrief prop not provided (used for both brief tab and self-check)
   const { data: taskBriefData, isLoading: briefLoading } = trpc.workflow.generateTaskBrief.useQuery(
@@ -126,10 +126,6 @@ export function WorkflowPanel({ chapterId, projectId, open, onClose, taskBrief, 
                 <p className="text-sm text-gray-500 mb-3">点击开始自检，AI 将自动分析正文内容，生成修改建议</p>
                 <button
                   onClick={async () => {
-                    if (!configs || configs.length === 0) {
-                      setSelfCheckReport('请先配置 AI 模型');
-                      return;
-                    }
                     // 获取任务书和正文
                     const briefResult = taskBriefData;
                     const latestContent = versions?.[0]?.content || '';
@@ -143,8 +139,8 @@ export function WorkflowPanel({ chapterId, projectId, open, onClose, taskBrief, 
                       const systemMsg = { role: 'system' as const, content: '你是一名专业的文学编辑。请对小说正文进行全面的自检，找出需要修改的问题。输出格式清晰的自检报告。注意：报告中不要包含任何签名或署名。' };
                       const userMsg = { role: 'user' as const, content: briefResult?.checkPrompt || `请对以下正文进行自检：\n\n${latestContent.slice(0, 8000)}` };
                       let fullReport = '';
-                      for await (const chunk of streamAiChat({
-                        configId: configs[0].id,
+                      for await (const chunk of streamPlatformAiChat({
+                        model: preferredModelData?.preferredModel || 'longcat/LongCat-Flash-Thinking-2601',
                         messages: [systemMsg, userMsg],
                         projectId,
                       })) {
@@ -165,7 +161,7 @@ export function WorkflowPanel({ chapterId, projectId, open, onClose, taskBrief, 
                     }
                     setSelfCheckGenerating(false);
                   }}
-                  disabled={!configs || configs.length === 0}
+                  disabled={false}
                   className="w-full py-2.5 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   开始自检

@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useState, useRef, useEffect } from 'react';
 import { useBackgroundStore } from '@/lib/background-store';
 import { trpc } from '@/lib/trpc';
@@ -73,12 +74,14 @@ export function BackgroundSwitcher() {
                   }`}
                   title={bg.name}
                 >
-                  <img
+                  <Image
                     src={`/backgrounds/${thumbName}`}
                     alt={bg.name}
-                    className="w-full h-full object-cover"
+                    fill
+                    sizes="160px"
+                    className="object-cover"
                     onError={(e) => {
-                      (e.target as HTMLImageElement).style.display = 'none';
+                      (e.currentTarget as HTMLImageElement).style.display = 'none';
                     }}
                   />
                   <span className="absolute bottom-0 inset-x-0 bg-black/50 text-white text-[10px] px-1 py-0.5 truncate">

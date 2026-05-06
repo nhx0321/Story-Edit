@@ -3,10 +3,6 @@
 import Link from 'next/link';
 import { trpc } from '@/lib/trpc';
 
-function toYuan(amount: number): string {
-  return (amount / 10_000_000).toFixed(2);
-}
-
 function formatPrice(pricePer1m: number): string {
   if (pricePer1m === 0) return '免费';
   return `¥${(pricePer1m / 100).toFixed(2)}/百万Token`;
@@ -27,6 +23,18 @@ export default function AIConfigPage() {
   });
 
   const balance = account?.balance ?? 0;
+  const accountRole = account?.role ?? 'free';
+  const roleLabel = accountRole === 'admin'
+    ? '管理员'
+    : accountRole === 'paid'
+      ? '付费用户'
+      : accountRole === 'tester'
+        ? '测试用户'
+        : '免费用户';
+  const freeDailyLimit = account?.freeDailyLimit ?? account?.dailyLimit ?? 100_000;
+  const freeModelDailyUsed = account?.freeDailyUsed ?? account?.dailyUsed ?? 0;
+  const freeDailyRemaining = account?.freeDailyRemaining ?? Math.max(freeDailyLimit - freeModelDailyUsed, 0);
+  const hasUnlimitedFreeDailyLimit = account?.hasUnlimitedFreeDailyLimit ?? freeDailyLimit === 0;
   const DEFAULT_MODEL = 'longcat/LongCat-Flash-Thinking-2601';
   const selectedModelId = preferred?.preferredModel || DEFAULT_MODEL;
 
@@ -63,9 +71,13 @@ export default function AIConfigPage() {
       <div className="bg-gradient-to-r from-gray-900 to-gray-800 rounded-xl p-6 mb-6 text-white">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm text-gray-300 mb-1">Token 余额</p>
-            <p className="text-3xl font-bold">{balance.toLocaleString()}</p>
-            <p className="text-xs text-gray-400 mt-1">≈ ¥{toYuan(balance)}</p>
+            <p className="text-sm text-gray-300 mb-1">剩余免费 Token 用量</p>
+            <p className="text-3xl font-bold">{hasUnlimitedFreeDailyLimit ? '不限额' : freeDailyRemaining.toLocaleString()}</p>
+            <p className="text-xs text-gray-400 mt-1">
+              {hasUnlimitedFreeDailyLimit
+                ? `当前分组：${roleLabel}，免费模型不受日限额限制`
+                : `当前分组：${roleLabel}，已用 ${freeModelDailyUsed.toLocaleString()} / ${freeDailyLimit.toLocaleString()} Token`}
+            </p>
           </div>
           <div className="flex gap-3">
             <Link href="/ai-config/consumption"
@@ -120,13 +132,13 @@ export default function AIConfigPage() {
         </div>
       )}
 
-      {/* 余额为0提示 */}
-      {balance <= 0 && (
+      {/* 免费额度已用完提示 */}
+      {!hasUnlimitedFreeDailyLimit && freeDailyRemaining <= 0 && (
         <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6">
           <div className="flex items-center justify-between">
             <div className="flex items-start gap-3">
               <span className="text-red-500 shrink-0">ℹ</span>
-              <p className="text-sm text-red-700">余额为 0，仅可使用 LongCat 免费模型。充值成为付费用户后可解锁收费模型。</p>
+              <p className="text-sm text-red-700">今日免费 Token 已用完，当前仅可继续使用已充值解锁的收费模型，或等待次日免费额度重置。</p>
             </div>
             <Link href="/ai-config/recharge"
               className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-700 transition shrink-0 ml-4">

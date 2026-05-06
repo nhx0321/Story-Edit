@@ -10,13 +10,19 @@ export default function AIConfigTokensPage() {
   const setAlertMutation = trpc.token.setAlertThreshold.useMutation();
   const utils = trpc.useUtils();
 
-  if (isLoading) return <div className="text-center py-16 text-gray-400">加载中...</div>;
-
-  const balance = account?.balance ?? 0;
-  const totalConsumed = account?.totalConsumed ?? 0;
   const totalRecharged = account?.totalRecharged ?? 0;
-  const dailyLimit = account?.dailyLimit ?? 100_000;
-  const freeModelDailyUsed = account?.dailyUsed ?? 0;
+  const accountRole = account?.role ?? 'free';
+  const roleLabel = accountRole === 'admin'
+    ? '管理员'
+    : accountRole === 'paid'
+      ? '付费用户'
+      : accountRole === 'tester'
+        ? '测试用户'
+        : '免费用户';
+  const freeDailyLimit = account?.freeDailyLimit ?? account?.dailyLimit ?? 100_000;
+  const freeModelDailyUsed = account?.freeDailyUsed ?? account?.dailyUsed ?? 0;
+  const freeDailyRemaining = account?.freeDailyRemaining ?? Math.max(freeDailyLimit - freeModelDailyUsed, 0);
+  const hasUnlimitedFreeDailyLimit = account?.hasUnlimitedFreeDailyLimit ?? freeDailyLimit === 0;
   const dailyConsumed = stats?.todayTokens ?? 0;
   const modelStatsEntries = useMemo(() => Object.entries(stats?.byModel ?? {}).filter(([, data]) => (
     (data.todayTokens ?? 0) > 0 || (data.totalTokens ?? 0) > 0
@@ -25,25 +31,26 @@ export default function AIConfigTokensPage() {
   const alertThreshold = account?.alertThreshold;
   const alertEnabled = account?.alertEnabled ?? false;
 
-  // 转换为可读单位（1元 = 10,000,000 内部单位）
-  const toYuan = (units: number) => (units / 10_000_000).toFixed(4);
-  const toTokens = (units: number) => {
-    // 粗略估算：1元约等于100万token（对于deepseek价格）
-    return Math.round(units / 10_000_000 * 1_000_000);
-  };
+  const dailyPercent = !hasUnlimitedFreeDailyLimit && freeDailyLimit > 0
+    ? Math.round((freeModelDailyUsed / freeDailyLimit) * 100)
+    : 0;
 
-  const dailyPercent = dailyLimit > 0 ? Math.round((freeModelDailyUsed / dailyLimit) * 100) : 0;
+  if (isLoading) return <div className="text-center py-16 text-gray-400">加载中...</div>;
 
   return (
     <div className="max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold mb-8">Token 余额</h1>
+      <h1 className="text-2xl font-bold mb-8">免费 Token 用量</h1>
 
       {/* 余额卡片 */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
         <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-sm font-medium text-gray-500 mb-1">Token 余额</h2>
-          <p className="text-3xl font-bold text-gray-900">{toTokens(balance).toLocaleString()}</p>
-          <p className="text-xs text-gray-400 mt-1">≈ ¥{toYuan(balance)}</p>
+          <h2 className="text-sm font-medium text-gray-500 mb-1">剩余免费 Token 用量</h2>
+          <p className="text-3xl font-bold text-gray-900">{hasUnlimitedFreeDailyLimit ? '不限额' : freeDailyRemaining.toLocaleString()}</p>
+          <p className="text-xs text-gray-400 mt-1">
+            {hasUnlimitedFreeDailyLimit
+              ? `当前分组：${roleLabel}，免费模型不受日限额限制`
+              : `当前分组：${roleLabel}，已用 ${freeModelDailyUsed.toLocaleString()} / ${freeDailyLimit.toLocaleString()} Token`}
+          </p>
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 p-6">
@@ -53,28 +60,33 @@ export default function AIConfigTokensPage() {
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-sm font-medium text-gray-500 mb-1">免费模型日限额</h2>
+          <h2 className="text-sm font-medium text-gray-500 mb-1">免费模型今日已用</h2>
           <p className="text-3xl font-bold text-gray-900">{freeModelDailyUsed.toLocaleString()}</p>
-          <p className="text-xs text-gray-400 mt-1">免费模型日限额 {dailyLimit.toLocaleString()} Token</p>
-          <div className="mt-3 h-2 bg-gray-100 rounded-full overflow-hidden">
-            <div
-              className={`h-full rounded-full transition-all ${dailyPercent >= 80 ? 'bg-red-500' : dailyPercent >= 50 ? 'bg-yellow-500' : 'bg-green-500'}`}
-              style={{ width: `${Math.min(dailyPercent, 100)}%` }}
-            />
-          </div>
-          <p className="text-xs text-gray-400 mt-1">仅统计今日免费模型消耗；收费模型不计入该限额</p>
+          <p className="text-xs text-gray-400 mt-1">
+            {hasUnlimitedFreeDailyLimit
+              ? `当前分组：${roleLabel}，免费模型不计入日限额`
+              : `当前分组日限额 ${freeDailyLimit.toLocaleString()} Token`}
+          </p>
+          {!hasUnlimitedFreeDailyLimit && (
+            <>
+              <div className="mt-3 h-2 bg-gray-100 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${dailyPercent >= 80 ? 'bg-red-500' : dailyPercent >= 50 ? 'bg-yellow-500' : 'bg-green-500'}`}
+                  style={{ width: `${Math.min(dailyPercent, 100)}%` }}
+                />
+              </div>
+              <p className="text-xs text-gray-400 mt-1">仅统计今日免费模型消耗；收费模型不计入该限额</p>
+            </>
+          )}
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-sm font-medium text-gray-500 mb-1">累计统计</h2>
+          <h2 className="text-sm font-medium text-gray-500 mb-1">累计 Token 统计</h2>
           <p className="text-sm mt-3">
-            <span className="text-gray-500">累计消费：</span>
-            <span className="font-medium">{toTokens(totalConsumed).toLocaleString()} Token</span>
-          </p>
-          <p className="text-sm mt-1">
             <span className="text-gray-500">累计充值：</span>
-            <span className="font-medium">{toTokens(totalRecharged).toLocaleString()} Token</span>
+            <span className="font-medium">{totalRecharged.toLocaleString()} Token</span>
           </p>
+          <p className="text-xs text-gray-400 mt-1">按系统账户累计发放的 Token 额度统计</p>
         </div>
       </div>
 

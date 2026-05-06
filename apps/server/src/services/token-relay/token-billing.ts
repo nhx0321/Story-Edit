@@ -171,11 +171,20 @@ export async function getAccount(userId: string) {
   const config = await getGroupConfig(role);
   const dailyLimit = config.dailyTokenLimit;
   const dailyUsed = await getFreeModelDailyUsage(userId);
+  const hasUnlimitedFreeDailyLimit = dailyLimit === 0;
+  const freeDailyRemaining = hasUnlimitedFreeDailyLimit
+    ? 0
+    : Math.max(dailyLimit - dailyUsed, 0);
 
   return {
     ...account,
+    role,
     dailyLimit,
     dailyUsed,
+    freeDailyLimit: dailyLimit,
+    freeDailyUsed: dailyUsed,
+    freeDailyRemaining,
+    hasUnlimitedFreeDailyLimit,
   };
 }
 

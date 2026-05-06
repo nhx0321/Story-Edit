@@ -201,7 +201,10 @@ export default function AdminUsersPage() {
       unbanUser.mutate({ userId: selectedUser, banType });
     } else if (actionType === 'delete') {
       if (!confirm('确定要删除该用户吗？此操作会清空用户的邮箱、手机号等信息。')) return;
-      deleteUser.mutate({ userId: selectedUser });
+      deleteUser.mutate({ userId: selectedUser, hardDelete: false });
+    } else if (actionType === 'hardDelete') {
+      if (!confirm('确定要彻底删除该已删除用户吗？这会清空后台占用的 Token/精灵账户信息。')) return;
+      deleteUser.mutate({ userId: selectedUser, hardDelete: true });
     } else if (actionType === 'setRole') {
       setUserRoleMutation.mutate({ userId: selectedUser, role: selectedRole as 'free' | 'paid' | 'tester' });
     } else if (actionType === 'setAdmin') {
@@ -268,6 +271,9 @@ export default function AdminUsersPage() {
                       <div className="flex items-center gap-2">
                         <span className="text-lg">{u.avatarUrl || '👤'}</span>
                         <span className="font-medium">{u.nickname || '未设置'}</span>
+                        {u.isDeleted && (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-red-100 text-red-700">已删除</span>
+                        )}
                         {u.isAdmin && (
                           <span className={`text-xs px-1.5 py-0.5 rounded ${u.adminLevel === 0 ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
                             {u.adminLevel === 0 ? '总管' : `L${u.adminLevel}`}
@@ -369,6 +375,12 @@ export default function AdminUsersPage() {
                   className="w-full text-left px-4 py-3 rounded-lg border border-red-200 hover:bg-red-50 transition">
                   <span className="font-medium text-red-600">删除账号</span>
                 </button>
+                {userDetail?.nickname === '已删除用户' && !userDetail?.email && !userDetail?.phone && (
+                  <button onClick={() => setActionType('hardDelete')}
+                    className="w-full text-left px-4 py-3 rounded-lg border border-red-300 hover:bg-red-100 transition">
+                    <span className="font-medium text-red-700">彻底删除并清空后台占用</span>
+                  </button>
+                )}
               </div>
             )}
 
@@ -529,7 +541,6 @@ export default function AdminUsersPage() {
               </div>
             )}
 
-            {/* 删除确认 */}
             {actionType === 'delete' && (
               <div className="space-y-3">
                 <p className="text-sm text-red-600">删除后将清空该用户的邮箱、手机号等注册信息，但保留账户数据。</p>
@@ -537,6 +548,20 @@ export default function AdminUsersPage() {
                   <button onClick={handleAction} disabled={deleteUser.isPending}
                     className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition disabled:opacity-50">
                     确认删除
+                  </button>
+                  <button onClick={() => setActionType(null)}
+                    className="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50 transition">返回</button>
+                </div>
+              </div>
+            )}
+
+            {actionType === 'hardDelete' && (
+              <div className="space-y-3">
+                <p className="text-sm text-red-700">仅对已删除用户开放。执行后会清空该用户在后台占用的 Token 账户与精灵账户信息。</p>
+                <div className="flex gap-2">
+                  <button onClick={handleAction} disabled={deleteUser.isPending}
+                    className="flex-1 px-4 py-2 bg-red-700 text-white rounded-lg text-sm font-medium hover:bg-red-800 transition disabled:opacity-50">
+                    确认彻底删除
                   </button>
                   <button onClick={() => setActionType(null)}
                     className="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50 transition">返回</button>

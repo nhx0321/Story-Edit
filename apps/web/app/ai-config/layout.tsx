@@ -10,7 +10,7 @@ const NAV_SECTIONS = [
     items: [
       { href: '/ai-config', label: '模型列表', icon: '🤖' },
       { href: '/ai-config/recharge', label: '充值购买', icon: '🛒' },
-      { href: '/ai-config/tokens', label: 'Token 余额', icon: '💰' },
+      { href: '/ai-config/tokens', label: '免费 Token 用量', icon: '💰' },
       { href: '/ai-config/consumption', label: '站内用量统计', icon: '📋' },
     ],
   },
@@ -27,8 +27,10 @@ export default function AIConfigLayout({ children }: { children: React.ReactNode
   const pathname = usePathname();
   const { data: account } = trpc.token.getAccount.useQuery(undefined, { enabled: true });
 
-  const toTokens = (units: number) => Math.round(units / 10_000_000 * 1_000_000);
-  const balance = account?.balance ?? 0;
+  const freeDailyLimit = account?.freeDailyLimit ?? account?.dailyLimit ?? 100_000;
+  const freeModelDailyUsed = account?.freeDailyUsed ?? account?.dailyUsed ?? 0;
+  const freeDailyRemaining = account?.freeDailyRemaining ?? Math.max(freeDailyLimit - freeModelDailyUsed, 0);
+  const hasUnlimitedFreeDailyLimit = account?.hasUnlimitedFreeDailyLimit ?? freeDailyLimit === 0;
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -39,11 +41,16 @@ export default function AIConfigLayout({ children }: { children: React.ReactNode
           <h2 className="font-bold mt-2 text-base">AI 配置</h2>
         </div>
 
-        {/* Token 余额小卡片 */}
+        {/* 免费 Token 用量小卡片 */}
         {account && (
           <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
-            <p className="text-xs text-gray-500">Token 余额</p>
-            <p className="text-lg font-bold text-gray-900">{toTokens(balance).toLocaleString()}</p>
+            <p className="text-xs text-gray-500">剩余免费 Token 用量</p>
+            <p className="text-lg font-bold text-gray-900">{hasUnlimitedFreeDailyLimit ? '不限额' : freeDailyRemaining.toLocaleString()}</p>
+            <p className="text-[11px] text-gray-400 mt-1">
+              {hasUnlimitedFreeDailyLimit
+                ? '免费模型不受日限额限制'
+                : `已用 ${freeModelDailyUsed.toLocaleString()} / ${freeDailyLimit.toLocaleString()}`}
+            </p>
           </div>
         )}
 

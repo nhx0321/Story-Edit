@@ -36,8 +36,19 @@ export default function AIConfigRechargePage() {
   const balanceToBeanMutation = trpc.spriteBean.exchangeBalanceToBeans.useMutation();
   const beanToBalanceMutation = trpc.spriteBean.exchangeBeansToBalance.useMutation();
 
-  const toTokens = (units: number) => Math.round(units / 10_000_000 * 1_000_000);
   const balance = account?.balance ?? 0;
+  const accountRole = account?.role ?? 'free';
+  const roleLabel = accountRole === 'admin'
+    ? '管理员'
+    : accountRole === 'paid'
+      ? '付费用户'
+      : accountRole === 'tester'
+        ? '测试用户'
+        : '免费用户';
+  const freeDailyLimit = account?.freeDailyLimit ?? account?.dailyLimit ?? 100_000;
+  const freeModelDailyUsed = account?.freeDailyUsed ?? account?.dailyUsed ?? 0;
+  const freeDailyRemaining = account?.freeDailyRemaining ?? Math.max(freeDailyLimit - freeModelDailyUsed, 0);
+  const hasUnlimitedFreeDailyLimit = account?.hasUnlimitedFreeDailyLimit ?? freeDailyLimit === 0;
   const beanBalance = beanData?.beanBalance ?? 0;
 
   const handleBuy = (yuan: number) => {
@@ -122,9 +133,13 @@ export default function AIConfigRechargePage() {
           <p className="text-xs text-gray-400 mt-1">可用于 AI 创作消耗</p>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-5">
-          <p className="text-sm text-gray-500 mb-1">Token 余额</p>
-          <p className="text-2xl font-bold text-gray-900">{toTokens(balance).toLocaleString()}</p>
-          <p className="text-xs text-gray-400 mt-1">≈ ¥{(balance / 10_000_000).toFixed(2)}</p>
+          <p className="text-sm text-gray-500 mb-1">剩余免费 Token 用量</p>
+          <p className="text-2xl font-bold text-gray-900">{hasUnlimitedFreeDailyLimit ? '不限额' : freeDailyRemaining.toLocaleString()}</p>
+          <p className="text-xs text-gray-400 mt-1">
+            {hasUnlimitedFreeDailyLimit
+              ? `当前分组：${roleLabel}，免费模型不受日限额限制`
+              : `当前分组：${roleLabel}，已用 ${freeModelDailyUsed.toLocaleString()} / ${freeDailyLimit.toLocaleString()} Token`}
+          </p>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 p-5">
           <p className="text-sm text-gray-500 mb-1">精灵豆余额</p>

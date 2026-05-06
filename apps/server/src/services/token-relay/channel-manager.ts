@@ -1,4 +1,5 @@
 // 上游渠道池管理 — 多渠道负载均衡、故障转移、自动轮换
+import type { AIProvider } from '@story-edit/shared';
 import { db } from '../../db';
 import { apiChannels } from '../../db/schema';
 import { eq, and, sql, lt, or } from 'drizzle-orm';
@@ -22,6 +23,9 @@ export interface ChannelInfo {
 const BASE_COOLDOWN_MS = 5 * 1000; // 首次5秒
 const MAX_COOLDOWN_MS = 5 * 60 * 1000; // 上限5分钟
 const QUOTA_COOLDOWN_MS = 30 * 60 * 1000; // 上游账户额度不足时冷却30分钟，优先切其他账户
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const BEIJING_TIME_OFFSET_MS = 8 * 60 * 60 * 1000;
+const LONGCAT_PROVIDER: AIProvider = 'longcat';
 export const SLOW_RESPONSE_THRESHOLD_MS = 45_000;
 export const SLOW_CHANNEL_ERROR_MESSAGE = 'slow_response';
 
@@ -59,6 +63,23 @@ const roundRobinCounters = new Map<string, number>();
 
 function getCounterKey(provider: string, userTier: string): string {
   return `${provider}:${userTier}`;
+}
+
+function isLongcatProvider(provider?: string | null): boolean {
+  return provider === LONGCAT_PROVIDER;
+}
+
+function getNextBeijingMidnight(now: Date): Date {
+  const beijingNowMs = now.getTime() + BEIJING_TIME_OFFSET_MS;
+  const nextBeijingMidnightMs = Math.floor(beijingNowMs / ONE_DAY_MS) * ONE_DAY_MS + ONE_DAY_MS;
+  return new Date(nextBeijingMidnightMs - BEIJING_TIME_OFFSET_MS);
+}
+
+function getNextDailyResetAt(provider: string, now: Date): Date {
+  if (isLongcatProvider(provider)) {
+    return getNextBeijingMidnight(now);
+  }
+  return new Date(now.getTime() + ONE_DAY_MS);
 }
 
 /**
@@ -192,14 +213,35 @@ export async function recordChannelUsage(channelId: string, tokens: number): Pro
  * 标记渠道错误 — 递增连续错误计数（增量退避）
  */
 export async function markChannelError(channelId: string, errorMessage: string): Promise<void> {
+  const now = new Date();
   const current = channelErrorCounts.get(channelId) ?? 0;
   channelErrorCounts.set(channelId, current + 1);
 
+  if (isQuotaLikeError(errorMessage)) {
+    const [exhaustedLongcatChannel] = await db.update(apiChannels)
+      .set({
+        dailyUsed: sql`COALESCE(${apiChannels.dailyLimit}, 0)`,
+        dailyResetAt: getNextBeijingMidnight(now),
+        lastErrorAt: now,
+        lastErrorMessage: errorMessage,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(apiChannels.id, channelId),
+          eq(apiChannels.provider, LONGCAT_PROVIDER),
+        ),
+      )
+      .returning({ id: apiChannels.id });
+
+    if (exhaustedLongcatChannel) return;
+  }
+
   await db.update(apiChannels)
     .set({
-      lastErrorAt: new Date(),
+      lastErrorAt: now,
       lastErrorMessage: errorMessage,
-      updatedAt: new Date(),
+      updatedAt: now,
     })
     .where(eq(apiChannels.id, channelId));
 }
@@ -259,7 +301,7 @@ export async function checkChannelHealth(): Promise<void> {
     await db.update(apiChannels)
       .set({
         dailyUsed: 0,
-        dailyResetAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+        dailyResetAt: getNextDailyResetAt(ch.provider, now),
         status: 'active',
         lastErrorAt: null,
         lastErrorMessage: null,
@@ -277,7 +319,7 @@ export async function checkChannelHealth(): Promise<void> {
   for (const ch of channelsWithoutReset) {
     await db.update(apiChannels)
       .set({
-        dailyResetAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+        dailyResetAt: getNextDailyResetAt(ch.provider, now),
         updatedAt: now,
       })
       .where(eq(apiChannels.id, ch.id));

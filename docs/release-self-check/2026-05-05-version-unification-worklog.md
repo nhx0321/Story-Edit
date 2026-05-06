@@ -112,19 +112,25 @@
 
 ### 3.1 本地 / GitHub
 - 本地仓库分支：`main`
-- 本地 HEAD：`7b81d5932bdc4898003309e464b910a346f3f0e5`
-- GitHub `origin/HEAD`：`7b81d5932bdc4898003309e464b910a346f3f0e5`
-- 结论：当前 GitHub 与本地已提交基线一致，但本地仍有 12 项未提交改动 + 1 个未跟踪压缩包
+- 本地 HEAD：`147be667ddca59d9a96e0962722541c7af48db7a`
+- GitHub `origin/main`：`147be667ddca59d9a96e0962722541c7af48db7a`
+- 结论：当前本地已提交版本与 GitHub 已统一到同一 commit，未出现分叉；但本地工作树仍保留未提交代码改动与 2 个未跟踪归档文件，属于后续开发态，不影响当前线上运行版本。
 
 ### 3.2 阿里云服务器
-- `/root/Story-Edit` 当前 **不是** git 仓库
-- 当前仍属 archive/scp 覆盖式部署，不具备 commit / diff / rollback 的标准 git 追踪能力
+- 线上真实运行仓库：`/root/story-edit-gitified`
+- 当前分支：`main`
+- 服务器 HEAD：`147be667ddca59d9a96e0962722541c7af48db7a`
+- 服务器跟踪分支：`origin/main`
+- 结论：服务器 git 工作副本已与 GitHub 对齐，未出现分叉。
 - PM2 在线：`story-edit-server`、`story-edit-web`
+- PM2 cwd：
+  - `story-edit-server` -> `/root/story-edit-gitified/apps/server`
+  - `story-edit-web` -> `/root/story-edit-gitified/apps/web`
 - 健康检查通过：
   - `curl http://127.0.0.1:3001/health` → 200
   - `curl http://127.0.0.1:3000` → 200
   - `template.list` tRPC → 200
-- 背景资源目录 `/root/Story-Edit/apps/web/public/backgrounds/` 文件在位
+- 服务器 `git status` 当前仅剩 `apps/web/public/backgrounds/` 未跟踪，这属于背景资源走 scp 直传的双轨规则，不构成代码版本分叉。
 
 ### 3.3 数据库 / 权限链
 - 管理员基线账号：`阿木 / nhx0321@163.com / UID100000`
@@ -679,6 +685,71 @@
   - PM2 在线
   - 固定冒烟检查通过
 - 当前真正遗留项只剩常规优化项，不再影响“版本统一 + 标准发布主链恢复”这一主目标
+
+### 9.12 统计修复版本发布结果（commit `147be667ddca59d9a96e0962722541c7af48db7a`）
+- 本次发布目标：
+  - 用户今日消耗改按 `todayTokens`
+  - 模型消耗分布不再依赖 `totalCost > 0`
+  - 渠道详情页今日/累计/月度消耗统一按 input + output token 展示
+  - 运行包中带上 `channelId` / `requestId` / `todayTokens` / `getChannelDetail(channelId)` 新逻辑
+- 本地已完成：
+  - `pnpm --filter @story-edit/server lint`
+  - `pnpm --dir "E:/Story Edit/工具开发/项目/story-edit" build`
+  - `pnpm --filter @story-edit/web test`
+- GitHub 发布：
+  - 本地 commit: `147be667ddca59d9a96e0962722541c7af48db7a`
+  - 已 push 到 `origin/main`
+- 服务器执行：
+  - `cd /root/story-edit-gitified`
+  - `git pull --ff-only origin main`
+  - `bash deploy.sh`
+- 发布过程说明：
+  - `deploy.sh` 内嵌的首轮 `curl 127.0.0.1:3001/health` 在 PM2 reload 后短暂命中启动窗口，返回 `curl: (7) Failed to connect to 127.0.0.1 port 3001`
+  - 随后人工复检确认服务已正常监听，这次应记为**启动窗口假失败**，不作为真实发布失败结论
+- 发布后复检：
+  - `3001/health` -> 200
+  - `3000` -> 200
+  - `template.list` -> 200
+- PM2 真实运行目录：
+  - `story-edit-server` -> `/root/story-edit-gitified/apps/server`
+  - `story-edit-web` -> `/root/story-edit-gitified/apps/web`
+- 运行包静态标记确认：
+  - server `dist/index.mjs` 已包含 `channelId` / `requestId` / `todayTokens`
+  - server `dist/index.mjs` 已包含 `getChannelDetail` 按 `tokenConsumptionLogs.channelId` 聚合逻辑
+  - web `tokens` 页面构建产物已包含新文案与 `todayTokens` 使用
+- 当前数据库观察：
+  - 最近 10 条 `token_consumption_logs` 仍均为 2026-05-04 的旧 longcat 日志
+  - 这些旧日志 `channel_id/request_id` 为空，不能用于判断新版本是否失败
+- 当前待下一阶段统一人工验证：
+  - 生成发布后的新 longcat / qwen / deepseek 请求
+  - 检查新日志 `channel_id/request_id` 是否写入
+  - 检查 `/admin/channels/[id]` 与 `/ai-config/tokens` 展示口径是否一致
+
+### 9.13 背景资源上传链路与结果（2026-05-06）
+- 背景资源继续遵守双轨规则：
+  - 代码与配置走 GitHub / `git pull --ff-only`
+  - 大文件背景资源走本地直传服务器，不纳入 Git 仓库
+- 本次上传源目录：
+  - `E:/Story Edit/工具开发/项目/story-edit/apps/web/public/backgrounds`
+- 本次上传目标目录：
+  - `/root/story-edit-gitified/apps/web/public/backgrounds`
+- 实际上传文件共 5 组：
+  - `grassland.mp4` / `grassland.jpg`
+  - `pool.mp4` / `pool.jpg`
+  - `snow mountain.mp4` / `snow mountain.jpg`
+  - `under tree.mp4` / `under tree.jpg`
+  - `yard.mp4` / `yard.jpg`
+- 上传后执行：
+  - 重启 `story-edit-web`
+  - 核对服务器目录中文件在位且大小正常
+  - 服务器本机访问静态资源：
+    - `/backgrounds/grassland.jpg` -> 200
+    - `/backgrounds/grassland.mp4` -> 200
+    - `/backgrounds/snow%20mountain.jpg` -> 200
+- 结果结论：
+  - 新背景静态资源已进入真实运行目录并生效
+  - 服务器目录中的旧背景文件仍保留，但前台会按后台已注册的新 `fileName` 读取，不构成版本分叉
+  - 用户已完成前台刷新验证，当前背景上线链路闭合
 
 ## 10. 本文档后续追加规则
 - 每次新增代码修改后，在“变更 / 验证 / 回退对照表”追加一行
