@@ -1783,9 +1783,23 @@ export function ChatPanel({
                 {currentRoleKey === 'editor' && !onSaveDraft && msg.role === 'assistant' && !(streaming && i === messages.length - 1) && !extractAssistantActionTypes(msg.content).some(t => ['narrative', 'create_narrative', 'update_narrative', 'volume', 'create_volume', 'update_volume', 'unit', 'create_unit', 'update_unit', 'chapter', 'create_chapter', 'update_chapter'].includes(t)) && !EDITOR_STEPS.every(s => completedSteps.has(s.key)) && (
                   <div className="flex justify-start pl-2 mt-1 mb-2 gap-2">
                     <button
-                      onClick={() => {
+                      onClick={async () => {
                         if (streaming) return;
-                        sendMessage('好的，当前内容已确认，请继续。');
+                        // 兜底：如果当前处于故事脉络阶段（needs+skeleton已完成，narrative未完成），
+                        // 且AI回复内容足够长（像是完整脉络），自动调用 confirmAction 创建文档
+                        const isNarrativePhase = completedSteps.has('story_needs') && completedSteps.has('story_skeleton') && !completedSteps.has('story_narrative');
+                        const contentText = msg.content.replace(/\[ACTION:\w+\][\s\S]*?\[\/ACTION\]/g, '').trim();
+                        if (isNarrativePhase && contentText.length > 200) {
+                          try {
+                            await confirmAction('create_narrative', { title: '全书故事脉络', content: contentText });
+                          } catch (e) {
+                            console.error('[chat-panel] 兜底 create_narrative 失败:', e);
+                            // 失败时仍发送确认消息让 AI 继续
+                            sendMessage('好的，当前内容已确认，请继续。');
+                          }
+                        } else {
+                          sendMessage('好的，当前内容已确认，请继续。');
+                        }
                       }}
                       disabled={streaming}
                       className="text-sm px-5 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition font-medium shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
